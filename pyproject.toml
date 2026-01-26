@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ratsim-wildfire-gym-env"
+version = "0.1.0"
+description = "Gymnasium environment for the Ratsim wildfire simulator"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+
+authors = [
+  { name = "Your Name", email = "you@example.com" }
+]
+
+dependencies = [
+    "ratsim",
+    "gymnasium>=0.29",
+    "numpy",
+    "stable-baselines3>=2.0",
+]
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[tool.setuptools]
+packages = ["ratsim_wildfire_gym_env"]
+
+# Optional: install training script as CLI command
+[project.scripts]
+ratsim-wildfire-train = "train_ppo:main"
