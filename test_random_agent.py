@@ -12,12 +12,12 @@ def main():
         "startAndGoalClearingDistance": 5.0,
         "arenaWidth": 1000,
         "arenaHeight": 1000,
-        "treeDensity": 0.003,
+        "treeDensity": 0.009,
         "topology": "forest",
         "treesSwayingFactor": 1.0,
         "debrisTriggerzoneSpawnFrequency": 0.1,
         "debrisGroupSizeModifier": 1.0,
-        "carRoadSpawnFrequency": 0.05,
+        "carRoadSpawnFrequency": 5,
         "carVelocityMin": 10.0,
         "carVelocityMax": 20.0,
         "fireSpawnFrequency": 0.02,
@@ -37,6 +37,11 @@ def main():
         "type": "diff_drive",
     }
 
+
+    metaworldgen_cfg = {
+        "world_generation_metaseed" : 666
+    }
+
     # ---------------------------
     # Create environment
     # ---------------------------
@@ -44,6 +49,7 @@ def main():
         worldgen_config=worldgen_config,
         sensor_config=sensor_config,
         action_config=action_config,
+        metaworldgen_config=metaworldgen_cfg,
         max_steps=200,
     )
 
@@ -55,25 +61,27 @@ def main():
 
     total_reward = 0.0
 
-    for step in range(200):
-        action = env.action_space.sample()
-        obs, reward, terminated, truncated, info = env.step(action)
+    for episode in range(10):
+        for step in range(200):
+            action = env.action_space.sample()
+            obs, reward, terminated, truncated, info = env.step(action)
 
-        total_reward += reward
+            total_reward += reward
 
-        print(
-            f"step={step:03d} "
-            f"reward={reward:.3f} "
-            f"terminated={terminated} "
-            f"truncated={truncated}"
-        )
+            print(
+                f"step={step:03d} "
+                f"reward={reward:.3f} "
+                f"terminated={terminated} "
+                f"truncated={truncated}"
+            )
 
-        # Slow down so you can observe Unity
-        # time.sleep(0.05)
+            # Slow down so you can observe Unity
+            # time.sleep(0.05)
 
-        if terminated or truncated:
-            print("Episode finished")
-            break
+            if terminated or truncated:
+                print("Episode finished")
+                break
+        env.reset()
 
     print("Total reward:", total_reward)
 

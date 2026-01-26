@@ -18,6 +18,7 @@ class WildfireGymEnv(gym.Env):
         worldgen_config: dict,
         sensor_config: dict,
         action_config: dict,
+        metaworldgen_config: dict,
         max_steps: int = 1000,
     ):
         super().__init__()
@@ -39,7 +40,7 @@ class WildfireGymEnv(gym.Env):
 
 
         # --- Set up action params, read from configs ---
-        self.max_forward_velocity = self.action_config.get("max_forward_velocity", 5.0)
+        self.max_forward_velocity = self.action_config.get("max_forward_velocity", 20.0)
         self.max_angular_velocity = self.action_config.get("max_angular_velocity", 1.0)
         self.twist_msg_out_topic = "/cmd_vel"
         print(f"Action config: max_forward_velocity={self.max_forward_velocity}, max_angular_velocity={self.max_angular_velocity}")
@@ -54,7 +55,7 @@ class WildfireGymEnv(gym.Env):
 
         # --- Set sensing params ---
         # TODO - implement if needed
-        self.num_rays = 19
+        self.num_rays = 25
         self.lidar_msg_in_topic = "/lidar2d"
         self.goal_pose_msg_in_topic = "/wildfire_goal_position"
         self.agent_pose_msg_in_topic = "/rat1_pose"
@@ -67,6 +68,17 @@ class WildfireGymEnv(gym.Env):
             "goal": spaces.Box(-np.inf, np.inf, shape=(2,), dtype=np.float32),
         })
 
+        # Random generaiton preparation
+        # Create objects necessary for generating a world seed using the metaseed on every reset
+        self.metaworldgen_config = metaworldgen_config
+        self.world_seed_generator = None
+        if self.metaworldgen_config is not None and "world_generation_metaseed" in self.metaworldgen_config:
+            seed_generation_seed = metaworldgen_config["world_generation_metaseed"]
+            self.world_seed_generator = np.random.default_rng(seed_generation_seed)
+
+        # Reward init
+        self.collision_reward = -20
+
     # ---------------------------
     # Gym API
     # ---------------------------
@@ -77,14 +89,23 @@ class WildfireGymEnv(gym.Env):
 
         # --- World generation ---
         worldgen_msg = self._build_worldgen_msg(options)
+
+        # Change seed if using metaworldgen
+        if self.world_seed_generator is not None:
+            new_world_seed = int(self.world_seed_generator.integers(0, 2**31 - 1))
+            print(f"Generated new world seed: {new_world_seed}")
+            worldgen_msg.seed = new_world_seed
+
         self.conn.publish(worldgen_msg, "/wildfire_worldgen_input")
         self.conn.send_messages_and_step(enable_physics_step=False)
 
         # --- Read initial observations ---
         obs_msgs = self.conn.read_messages_from_unity()
-        print("RECEIVED MSGS:")
-        print(obs_msgs)
         obs = self._parse_observation(obs_msgs)
+
+        # -- Reset goal nearing tracking ---
+        goal_vector = self._extract_relative_goal_vector(obs_msgs)
+        self.best_goal_distance = np.linalg.norm(goal_vector)
 
         return obs, {}
 
@@ -97,8 +118,6 @@ class WildfireGymEnv(gym.Env):
 
         self.conn.send_messages_and_step(enable_physics_step=True)
         msgs = self.conn.read_messages_from_unity()
-        print("RECEIVED MSGS:")
-        print(msgs)
 
         obs = self._parse_observation(msgs)
         reward = self._compute_reward(msgs)
@@ -138,6 +157,14 @@ class WildfireGymEnv(gym.Env):
         msg.radiansCounterClockwise = float(action[1]) * self.max_angular_velocity
         return msg
 
+    def _get_collision_vel_if_collided(self, msgs):
+        collision_topic = "/collisions"
+        if not collision_topic in msgs.keys():
+            return None
+        collision_msg = msgs[collision_topic][0]
+        return collision_msg.data
+
+
     def _extract_relative_goal_vector(self, msgs):
         res = np.zeros(2, dtype=np.float32)
 
@@ -174,7 +201,7 @@ class WildfireGymEnv(gym.Env):
         lidar = self._extract_lidar(msgs)
         goal = self._extract_relative_goal_vector(msgs)
 
-        print("Relative goal vector:", goal)
+        # print("Relative goal vector:", goal)
 
         return {
             "lidar": lidar,
@@ -182,10 +209,27 @@ class WildfireGymEnv(gym.Env):
         }
 
     def _compute_reward(self, msgs):
-        # Placeholder
-        return -0.01
+        # Give reward for getting closer to goal
+        goal_vector = self._extract_relative_goal_vector(msgs)
+        goal_distance = np.linalg.norm(goal_vector)
+        reward = 0.0
+        if goal_distance < self.best_goal_distance:
+            reward += 1 * (self.best_goal_distance - goal_distance)
+            print(f"Reward for getting closer to goal: {reward:.3f}")
+            self.best_goal_distance = goal_distance
+
+        if self._get_collision_vel_if_collided(msgs) is not None:
+            reward = self.collision_reward
+            print(f"Collision detected! Applying collision reward: {self.collision_reward}")
+
+        return reward
 
     def _check_terminated(self, msgs):
+
+        if self._get_collision_vel_if_collided(msgs) is not None:
+            print("Terminating episode due to collision.")
+            return True
+
         return False
 
     # --- Sensor helpers ---
