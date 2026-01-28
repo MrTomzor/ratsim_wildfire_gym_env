@@ -30,9 +30,11 @@ class WildfireGymEnv(gym.Env):
         self.step_count = 0
 
         # TODO - metaparams 
-        self.goal_observation_format = "normalized_deltavec" # or deltavec, or heading
+        # self.goal_observation_format = "normalized_deltavec" # or deltavec, or heading
         # self.goal_observation_format = "deltavec" # or deltavec, or heading
+        self.goal_observation_format = "heading" # or deltavec, or heading
         self.lidar_observation_format = "depth_only"
+        self.lidar_enabled = True
 
         # --- Connect to Ratsim ---
         self.conn = RoslikeUnityConnector(verbose=False)
@@ -60,6 +62,7 @@ class WildfireGymEnv(gym.Env):
         # --- Set sensing params ---
         # TODO - implement if needed
         self.num_rays = 25
+        self.lidar_max_range = 60
         self.lidar_msg_in_topic = "/lidar2d"
         self.goal_pose_msg_in_topic = "/wildfire_goal_position"
         self.agent_pose_msg_in_topic = "/rat1_pose"
@@ -67,24 +70,30 @@ class WildfireGymEnv(gym.Env):
         # --- Observation space ---
         # Example: lidar + goal vector
         obsvdict = {}
-        if self.lidar_observation_format == "depth_only":
-            obsvdict["lidar"] = spaces.Box(0.0, 100.0, shape=(self.num_rays,), dtype=np.float32)
-        else:
-            print("Warning: unknown lidar observation format")
-            return 1
+        if self.lidar_enabled:
+            if self.lidar_observation_format == "depth_only":
+                # obsvdict["lidar"] = spaces.Box(0.0, 100.0, shape=(self.num_rays,), dtype=np.float32)
+                obsvdict["lidar"] = spaces.Box(0.0, 1.0, shape=(self.num_rays,), dtype=np.float32) # normalized
+            else:
+                print("Warning: unknown lidar observation format")
+                return 1
 
         if self.goal_observation_format == "normalized_deltavec":
             obsvdict["goal"] = spaces.Box(-1, 1, shape=(2,), dtype=np.float32)
         elif self.goal_observation_format == "deltavec":
             obsvdict["goal"] = spaces.Box(-np.inf, np.inf, shape=(2,), dtype=np.float32)
         elif self.goal_observation_format == "heading":
-            obsvdict["goal"] = spaces.Box(-np.pi, np.pi, shape=(1,), dtype=np.float32)
+            # obsvdict["goal"] = spaces.Box(-np.pi, np.pi, shape=(1,), dtype=np.float32)
+            obsvdict["goal"] = spaces.Box(-1, 1, shape=(1,), dtype=np.float32)
         else:
             print("Warning: unknown goal observation format, defaulting to normalized_deltavec")
             return 1
 
         lidar_dim = self.num_rays
         self.observation_space = spaces.Dict(obsvdict)
+
+        # print dimensionality of observation space
+        print("Observation space:", self.observation_space)
 
         # Random generaiton preparation
         # Create objects necessary for generating a world seed using the metaseed on every reset
@@ -95,7 +104,7 @@ class WildfireGymEnv(gym.Env):
             self.world_seed_generator = np.random.default_rng(seed_generation_seed)
 
         # Reward init
-        self.collision_reward = -20
+        self.collision_reward = -10
 
     # ---------------------------
     # Gym API
@@ -122,6 +131,10 @@ class WildfireGymEnv(gym.Env):
         obs = self._parse_observation(obs_msgs)
 
         # -- Reset goal nearing tracking ---
+
+        # Write initial best goal distance if was initialized before
+        if hasattr(self, 'best_goal_distance'):
+            print("best goal distance:" + str(self.best_goal_distance))
         goal_vector = self._extract_relative_goal_vector(obs_msgs)
         self.best_goal_distance = np.linalg.norm(goal_vector)
 
@@ -229,13 +242,21 @@ class WildfireGymEnv(gym.Env):
 
         # Transform goal vec to heading if needed
         if self.goal_observation_format == "heading":
-            heading = np.arctan2(goal[1], goal[0])
+            # heading = np.arctan2(goal[1], goal[0])
+            heading = np.arctan2(goal[1], goal[0]) / np.pi  # normalize to [-1, 1]
             goal = np.array([heading], dtype=np.float32)
 
-        return {
-            "lidar": lidar,
-            "goal": goal,
-        }
+            # head_deg = np.degrees(heading)
+            # print("Goal heading: ", goal, f"({head_deg:.1f} deg)")
+        if self.lidar_enabled:
+            return {
+                "lidar": lidar,
+                "goal": goal,
+            }
+        else:
+            return {
+                "goal": goal,
+            }
 
     def _compute_reward(self, msgs):
         # Give reward for getting closer to goal
@@ -273,6 +294,9 @@ class WildfireGymEnv(gym.Env):
         # Lidar has -1 for out of range, convert to max range
         dists = np.array(lidar_msg.ranges, dtype=np.float32)
         dists[dists < 0] = lidar_msg.maxRange
+
+        # NORMALIZE lidar to max range
+        dists = dists / lidar_msg.maxRange
         return dists
 
     def _extract_goal(self, msgs):
