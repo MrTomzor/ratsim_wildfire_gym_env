@@ -48,7 +48,12 @@ class WildfireGymEnv(gym.Env):
         # --- Set up action params, read from configs ---
         self.max_forward_velocity = self.action_config.get("max_forward_velocity", 20.0)
         self.max_angular_velocity = self.action_config.get("max_angular_velocity", 1.0)
-        self.twist_msg_out_topic = "/cmd_vel"
+        self.max_forward_acceleration = self.action_config.get("max_forward_acceleration", 10.0)
+        self.max_angular_velocity = self.action_config.get("max_forward_acceleration", 10.0)
+        self.vel_twist_msg_out_topic = "/cmd_vel"
+        self.accel_twist_msg_out_topic = "/cmd_accel"
+        # self.control_mode = self.action_config.get("control_mode", "velocity") 
+        self.control_mode = self.action_config.get("control_mode", "acceleration") 
         print(f"Action config: max_forward_velocity={self.max_forward_velocity}, max_angular_velocity={self.max_angular_velocity}")
 
         # --- Action space ---
@@ -145,7 +150,10 @@ class WildfireGymEnv(gym.Env):
 
         # --- Send action ---
         action_msg = self._build_action_msg(action)
-        self.conn.publish(action_msg, "/cmd_vel")
+        if self.control_mode == "acceleration":
+            self.conn.publish(action_msg, self.accel_twist_msg_out_topic)
+        else:
+            self.conn.publish(action_msg, self.vel_twist_msg_out_topic)
 
         self.conn.send_messages_and_step(enable_physics_step=True)
         msgs = self.conn.read_messages_from_unity()
@@ -185,9 +193,16 @@ class WildfireGymEnv(gym.Env):
     def _build_action_msg(self, action):
         # Replace with your real message
         msg = Twist2DMessage()
-        msg.forward = float(action[0]) * self.max_forward_velocity
-        msg.left = 0
-        msg.radiansCounterClockwise = float(action[1]) * self.max_angular_velocity
+        if self.control_mode == "acceleration":
+            # Acceleration control
+            msg.forward = float(action[0]) * self.max_forward_acceleration
+            msg.left = 0
+            msg.radiansCounterClockwise = float(action[1]) * self.max_angular_velocity
+        else:
+            # Velocity control
+            msg.forward = float(action[0]) * self.max_forward_velocity
+            msg.left = 0
+            msg.radiansCounterClockwise = float(action[1]) * self.max_angular_velocity
         return msg
 
     def _get_collision_vel_if_collided(self, msgs):
