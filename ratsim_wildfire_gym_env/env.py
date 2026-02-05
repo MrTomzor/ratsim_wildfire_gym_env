@@ -202,12 +202,12 @@ class WildfireGymEnv(gym.Env):
         # transform the dict of name : value into a dict of topic(=name) : message for basic data types
         worldgen_msgs = {}
         for k, v in cfg.items():
-            if isinstance(v, int):
+            if isinstance(v, bool):
+                msg = BoolMessage(data=v)
+            elif isinstance(v, int):
                 msg = Int32Message(data=v)
             elif isinstance(v, float):
                 msg = Float32Message(data=v)
-            elif isinstance(v, bool):
-                msg = BoolMessage(data=v)
             elif isinstance(v, str):
                 msg = StringMessage(data=v)
             else:
