@@ -2,9 +2,12 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from ratsim.roslike_unity_connector.connector import RoslikeUnityConnector
+from ratsim.roslike_unity_connector.connector import BoolMessage, RoslikeUnityConnector
 from ratsim.roslike_unity_connector.message_definitions import (
-    WildfireWorldGenMessage,
+    # WildfireWorldGenMessage,
+    Int32Message,
+    Float32Message,
+    BoolMessage,
     StringMessage,
     Twist2DMessage,
     Lidar2DMessage,
@@ -119,17 +122,28 @@ class WildfireGymEnv(gym.Env):
         super().reset(seed=seed)
         self.step_count = 0
 
-        # --- World generation ---
-        worldgen_msg = self._build_worldgen_msg(options)
 
         # Change seed if using metaworldgen
         if self.world_seed_generator is not None:
+            if options is None:
+                options = {}
             new_world_seed = int(self.world_seed_generator.integers(0, 2**31 - 1))
             print(f"Generated new world seed: {new_world_seed}")
-            worldgen_msg.seed = new_world_seed
+            # worldgen_msgs.seed = new_world_seed
+            options["seed"] = new_world_seed
 
-        self.conn.publish(worldgen_msg, "/wildfire_worldgen_input")
+        # --- World generation ---
+        worldgen_msgs = self._build_worldgen_msgs(options)
+        worldgen_msgs["requested"] = BoolMessage(data=True)
+
+        # self.conn.publish(worldgen_msg, "/wildfire_worldgen_input")
+        for topic, msg in worldgen_msgs.items():
+            print(f"Publishing worldgen msg on topic /worldgen/{topic}: {msg}")
+            self.conn.publish(msg, f"/worldgen/{topic}")
         self.conn.send_messages_and_step(enable_physics_step=False)
+
+        # Perform one more step to let worldgen happen
+        self.conn.send_messages_and_step(enable_physics_step=True)
 
         # --- Read initial observations ---
         obs_msgs = self.conn.read_messages_from_unity()
@@ -180,15 +194,32 @@ class WildfireGymEnv(gym.Env):
         self.conn.send_messages_and_step(enable_physics_step=False)
         self.conn.read_messages_from_unity()
 
-    def _build_worldgen_msg(self, options):
+    def _build_worldgen_msgs(self, options):
         cfg = dict(self.worldgen_config)
         if options is not None:
             cfg.update(options)
 
-        msg = WildfireWorldGenMessage()
+        # transform the dict of name : value into a dict of topic(=name) : message for basic data types
+        worldgen_msgs = {}
         for k, v in cfg.items():
-            setattr(msg, k, v)
-        return msg
+            if isinstance(v, int):
+                msg = Int32Message(data=v)
+            elif isinstance(v, float):
+                msg = Float32Message(data=v)
+            elif isinstance(v, bool):
+                msg = BoolMessage(data=v)
+            elif isinstance(v, str):
+                msg = StringMessage(data=v)
+            else:
+                print(f"Warning: unsupported worldgen config type for key {k}, value {v}. Skipping.")
+                continue
+            worldgen_msgs[k] = msg
+        return worldgen_msgs
+
+        # msg = WildfireWorldGenMessage()
+        # for k, v in cfg.items():
+        #     setattr(msg, k, v)
+        # return msg
 
     def _build_action_msg(self, action):
         # Replace with your real message
