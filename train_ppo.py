@@ -11,10 +11,19 @@ def make_env():
         "mainLayout" : "suburb",
         "numAgents": 1,
         "startAndGoalClearingDistance": 5.0,
-        "arenaWidth": 1000.0, # have to be float for proper msg conversion
-        "arenaHeight": 1500.0,
+        # "arenaWidth": 1000.0, # have to be float for proper msg conversion
+        # "arenaHeight": 1500.0,
+        "arenaWidth": 200.0, # have to be float for proper msg conversion
+        "arenaHeight": 200.0,
         "treeDensity": 0.01,
         "treeOscillationEnabled" : False,
+        "houseNumerosity" : 5.0,
+        "houseDoorDefaultType" : "none",
+        # "rewardNumerosity" : 1.0,
+        # "rewardDistribution" : "houses",
+        # "rewardNumerosity" : 0.02,
+        "rewardNumerosity" : 0.005,
+        "rewardDistribution" : "everywhere",
     }
 
     sensor_config = {
@@ -22,17 +31,24 @@ def make_env():
     }
 
     action_config = {
-        "type": "diff_drive",
+        # "control_mode": "acceleration",
+        "control_mode": "velocity",
     }
 
     metaworldgen_cfg = {
         "world_generation_metaseed": 666
     }
 
+    reward_config = {
+        "hard_collision_reward" : -100,
+        "reward_pickup_reward" : 20,
+    }
+
     return WildfireGymEnv(
         worldgen_config=worldgen_config,
         sensor_config=sensor_config,
         action_config=action_config,
+        reward_config=reward_config,
         metaworldgen_config=metaworldgen_cfg,
         max_steps=400,
     )
@@ -55,7 +71,7 @@ def main():
 
     model.learn(total_timesteps=1_000_000)
 
-    model.save("ppo_wildfire_trained")
+    model.save("models/ppo_wildfire_trained")
 
     env.close()
 
