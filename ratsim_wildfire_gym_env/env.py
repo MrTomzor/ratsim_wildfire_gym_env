@@ -13,7 +13,7 @@ from ratsim.roslike_unity_connector.message_definitions import (
     Lidar2DMessage,
 )
 
-class WildfireGymEnv(gym.Env):
+class WildfireGymEnv(gym.Env):# # #{
     metadata = {"render_modes": []}
 
     def __init__(
@@ -127,12 +127,13 @@ class WildfireGymEnv(gym.Env):
         if self.metaworldgen_config is not None and "world_generation_metaseed" in self.metaworldgen_config:
             seed_generation_seed = metaworldgen_config["world_generation_metaseed"]
             self.world_seed_generator = np.random.default_rng(seed_generation_seed)
+# # #}
 
     # ---------------------------
     # Gym API
     # ---------------------------
 
-    def reset(self, *, seed=None, options=None):
+    def reset(self, *, seed=None, options=None):# # #{
         super().reset(seed=seed)
         self.step_count = 0
 
@@ -172,8 +173,9 @@ class WildfireGymEnv(gym.Env):
         self.best_goal_distance = np.linalg.norm(goal_vector)
 
         return obs, {}
+# # #}
 
-    def step(self, action):
+    def step(self, action):# # #{
         self.step_count += 1
 
         # --- Send action ---
@@ -194,23 +196,25 @@ class WildfireGymEnv(gym.Env):
         truncated = self.step_count >= self.max_steps
 
         return obs, reward, terminated, truncated, {}
+# # #}
 
-    def close(self):
+    def close(self):# # #{
         # self.conn.close()
         print("Closing WildfireGymEnv.")
         return
-
+# # #}
     # ---------------------------
     # Helpers
     # ---------------------------
 
-    def _select_scene(self, scene_name: str):
+    def _select_scene(self, scene_name: str):# # #{
         msg = StringMessage(data=scene_name)
         self.conn.publish(msg, "/sim_control/scene_select")
         self.conn.send_messages_and_step(enable_physics_step=False)
         self.conn.read_messages_from_unity()
+# # #}
 
-    def _build_worldgen_msgs(self, options):
+    def _build_worldgen_msgs(self, options):# # #{
         cfg = dict(self.worldgen_config)
         if options is not None:
             cfg.update(options)
@@ -236,8 +240,10 @@ class WildfireGymEnv(gym.Env):
         # for k, v in cfg.items():
         #     setattr(msg, k, v)
         # return msg
+# # #}
 
-    def _build_action_msg(self, action):
+
+    def _build_action_msg(self, action):# # #{
         # Replace with your real message
         msg = Twist2DMessage()
         if self.control_mode == "acceleration":
@@ -251,15 +257,17 @@ class WildfireGymEnv(gym.Env):
             msg.left = 0
             msg.radiansCounterClockwise = float(action[1]) * self.max_angular_velocity
         return msg
+# # #}
 
-    def _get_collision_vel_if_collided(self, msgs):
+    def _get_collision_vel_if_collided(self, msgs):# # #{
         collision_topic = "/collisions"
         if not collision_topic in msgs.keys():
             return None
         collision_msg = msgs[collision_topic][0]
         return collision_msg.data
+# # #}
 
-    def _check_num_reward_objs_picked_up(self, msgs):
+    def _check_num_reward_objs_picked_up(self, msgs):# # #{
         rew_topic = "/reward_pickup"
         if not rew_topic in msgs.keys():
             return 0
@@ -268,7 +276,9 @@ class WildfireGymEnv(gym.Env):
         total_picked_up = sum([msg.data for msg in rew_msgs])
         return total_picked_up
 
-    def _extract_relative_goal_vector(self, msgs):
+# # #}
+
+    def _extract_relative_goal_vector(self, msgs):# # #{
         res = np.zeros(2, dtype=np.float32)
 
         if not self.goal_pose_msg_in_topic in msgs.keys() or not self.agent_pose_msg_in_topic in msgs.keys():
@@ -296,10 +306,9 @@ class WildfireGymEnv(gym.Env):
         res[0] = rel_x
         res[1] = rel_y
         return res
+# # #}
 
-
-
-    def _parse_observation(self, msgs):
+    def _parse_observation(self, msgs):# # #{
         # This is where your sensor parsing lives
         lidar = self._extract_lidar(msgs)
         # print("Lidar sample:")
@@ -326,8 +335,9 @@ class WildfireGymEnv(gym.Env):
         if not self.goal_observation_format == "none":
             resdict["goal"] = goal
         return resdict
+# # #}
 
-    def _compute_reward(self, msgs):
+    def _compute_reward(self, msgs):# # #{
         # Give reward for getting closer to goal
         goal_vector = self._extract_relative_goal_vector(msgs)
         goal_distance = np.linalg.norm(goal_vector)
@@ -347,17 +357,20 @@ class WildfireGymEnv(gym.Env):
             print(f"!!! - Reward for picking up objects: {pickupable_reward}")
 
         return reward
+# # #}
 
-    def _check_terminated(self, msgs):
+
+    def _check_terminated(self, msgs):# # #{
 
         if self._get_collision_vel_if_collided(msgs) is not None:
             print("Terminating episode due to collision.")
             return True
 
         return False
+# # #}
 
     # --- Sensor helpers ---
-    def _extract_lidar(self, msgs):
+    def _extract_lidar(self, msgs):# # #{
         # TODO: parse lidar topic, just the distances
         if not self.lidar_msg_in_topic in msgs.keys():
             print("Warning: lidar message not found in msgs.")
@@ -377,7 +390,7 @@ class WildfireGymEnv(gym.Env):
             # one hot encoded so no normalization needed
             return np.concatenate([dists, semantics], axis=0)
 
-        return dists
+        return dists# # #}
 
-    def _extract_goal(self, msgs):
-        return np.zeros(2, dtype=np.float32)
+    def _extract_goal(self, msgs):# # #{
+        return np.zeros(2, dtype=np.float32)# # #}
