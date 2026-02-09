@@ -172,6 +172,7 @@ class WildfireGymEnv(gym.Env):# # #{
         goal_vector = self._extract_relative_goal_vector(obs_msgs)
         self.best_goal_distance = np.linalg.norm(goal_vector)
 
+
         return obs, {}
 # # #}
 
@@ -203,6 +204,7 @@ class WildfireGymEnv(gym.Env):# # #{
         print("Closing WildfireGymEnv.")
         return
 # # #}
+
     # ---------------------------
     # Helpers
     # ---------------------------
@@ -242,7 +244,6 @@ class WildfireGymEnv(gym.Env):# # #{
         # return msg
 # # #}
 
-
     def _build_action_msg(self, action):# # #{
         # Replace with your real message
         msg = Twist2DMessage()
@@ -257,14 +258,6 @@ class WildfireGymEnv(gym.Env):# # #{
             msg.left = 0
             msg.radiansCounterClockwise = float(action[1]) * self.max_angular_velocity
         return msg
-# # #}
-
-    def _get_collision_vel_if_collided(self, msgs):# # #{
-        collision_topic = "/collisions"
-        if not collision_topic in msgs.keys():
-            return None
-        collision_msg = msgs[collision_topic][0]
-        return collision_msg.data
 # # #}
 
     def _check_num_reward_objs_picked_up(self, msgs):# # #{
@@ -308,6 +301,39 @@ class WildfireGymEnv(gym.Env):# # #{
         return res
 # # #}
 
+    def _compute_reward(self, msgs):# # #{
+        # Give reward for getting closer to goal
+        goal_vector = self._extract_relative_goal_vector(msgs)
+        goal_distance = np.linalg.norm(goal_vector)
+        reward = 0.0
+        if goal_distance < self.best_goal_distance:
+            reward += 1 * (self.best_goal_distance - goal_distance)
+            # print(f"Reward for getting closer to goal: {reward:.3f}")
+            self.best_goal_distance = goal_distance
+
+        if self._get_collision_vel_if_collided(msgs) is not None:
+            reward += self.reward_config.get("hard_collision_reward", -100.0)
+            # print(f"Collision detected! Applying collision reward: {self.collision_reward}")
+        pickupable_reward = self._check_num_reward_objs_picked_up(msgs) * self.reward_config.get("reward_pickup_reward", 20.0)
+        reward += pickupable_reward
+
+        if(pickupable_reward > 0):
+            print(f"!!! - Reward for picking up objects: {pickupable_reward}")
+
+        return reward
+# # #}
+
+    def _check_terminated(self, msgs):# # #{
+
+        if self._get_collision_vel_if_collided(msgs) is not None:
+            print("Terminating episode due to collision.")
+            return True
+
+        return False
+# # #}
+
+    # --- Sensor helpers ---
+
     def _parse_observation(self, msgs):# # #{
         # This is where your sensor parsing lives
         lidar = self._extract_lidar(msgs)
@@ -337,39 +363,14 @@ class WildfireGymEnv(gym.Env):# # #{
         return resdict
 # # #}
 
-    def _compute_reward(self, msgs):# # #{
-        # Give reward for getting closer to goal
-        goal_vector = self._extract_relative_goal_vector(msgs)
-        goal_distance = np.linalg.norm(goal_vector)
-        reward = 0.0
-        if goal_distance < self.best_goal_distance:
-            reward += 1 * (self.best_goal_distance - goal_distance)
-            # print(f"Reward for getting closer to goal: {reward:.3f}")
-            self.best_goal_distance = goal_distance
-
-        if self._get_collision_vel_if_collided(msgs) is not None:
-            reward += self.reward_config.get("hard_collision_reward", -100.0)
-            # print(f"Collision detected! Applying collision reward: {self.collision_reward}")
-        pickupable_reward = self._check_num_reward_objs_picked_up(msgs) * self.reward_config.get("reward_pickup_reward", 20.0)
-        reward += pickupable_reward
-
-        if(pickupable_reward > 0):
-            print(f"!!! - Reward for picking up objects: {pickupable_reward}")
-
-        return reward
+    def _get_collision_vel_if_collided(self, msgs):# # #{
+        collision_topic = "/collisions"
+        if not collision_topic in msgs.keys():
+            return None
+        collision_msg = msgs[collision_topic][0]
+        return collision_msg.data
 # # #}
 
-
-    def _check_terminated(self, msgs):# # #{
-
-        if self._get_collision_vel_if_collided(msgs) is not None:
-            print("Terminating episode due to collision.")
-            return True
-
-        return False
-# # #}
-
-    # --- Sensor helpers ---
     def _extract_lidar(self, msgs):# # #{
         # TODO: parse lidar topic, just the distances
         if not self.lidar_msg_in_topic in msgs.keys():
