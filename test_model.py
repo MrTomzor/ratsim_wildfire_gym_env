@@ -1,11 +1,12 @@
+from ratsim_wildfire_gym_env.curricula import get_named_worldconfig
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from ratsim_wildfire_gym_env.env import WildfireGymEnv
-from ratsim_wildfire_gym_env.curricula import get_curriculum
+from ratsim_wildfire_gym_env.curricula import *
 import sys
 import numpy as np
 
-curriculum_name = ""
+worldconfig_name = ""
 
 def make_env():
     worldgen_config = {
@@ -34,9 +35,9 @@ def make_env():
         "reward_pickup_reward": 20,
     }
     
-    print(f"Testing with curriculum: {curriculum_name}")
-    if curriculum_name != "":
-        worldgen_config, sensor_config, action_config, reward_config = get_curriculum(curriculum_name)
+    print(f"Testing with worldname: {worldconfig_name}")
+    if worldconfig_name != "":
+        worldgen_config, sensor_config, action_config, reward_config = get_named_worldconfig(worldconfig_name)
     
     return WildfireGymEnv(
         worldgen_config=worldgen_config,
@@ -44,7 +45,7 @@ def make_env():
         action_config=action_config,
         reward_config=reward_config,
         metaworldgen_config=metaworldgen_cfg,
-        max_steps=800,
+        # max_steps=800,
     )
 
 def test_model(model_path, num_episodes=10, render=False):
@@ -127,19 +128,19 @@ def test_model(model_path, num_episodes=10, render=False):
     }
 
 def main():
-    global curriculum_name
+    global worldconfig_name
     
     # Parse command line arguments
     if len(sys.argv) < 2:
-        print("Usage: python test.py <model_path> [curriculum_name] [num_episodes]")
-        print("Example: python test.py models/ppo_wildfire_trained.zip easy_curriculum 20")
+        print("Usage: python test.py <model_path> [worldconfig_name] [num_episodes]")
+        print("Example: python test.py models/ppo_wildfire_trained.zip forest_foraging_easy_1 20")
         sys.exit(1)
     
     model_path = sys.argv[1]
     
     if len(sys.argv) > 2:
-        curriculum_name = sys.argv[2]
-        print(f"Using curriculum: {curriculum_name}")
+        worldconfig_name = sys.argv[2]
+        print(f"Using worldname: {worldconfig_name}")
     
     num_episodes = 10  # default
     if len(sys.argv) > 3:

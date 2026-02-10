@@ -13,6 +13,8 @@ from ratsim.roslike_unity_connector.message_definitions import (
     Lidar2DMessage,
 )
 
+from ratsim_wildfire_gym_env.curricula import *
+
 class WildfireGymEnv(gym.Env):# # #{
     metadata = {"render_modes": []}
 
@@ -23,7 +25,7 @@ class WildfireGymEnv(gym.Env):# # #{
         action_config: dict,
         reward_config: dict,
         metaworldgen_config: dict,
-        max_steps: int = 1000,
+        curriculum_name: str = "",
     ):
         super().__init__()
 
@@ -31,8 +33,12 @@ class WildfireGymEnv(gym.Env):# # #{
         self.sensor_config = sensor_config
         self.action_config = action_config
         self.reward_config = reward_config
-        self.max_steps = max_steps
         self.step_count = 0
+
+        self.curriculum = None
+        if curriculum_name != "":
+            print(f"Using curriculum: {curriculum_name}")
+            self.curriculum = build_curriculum(curriculum_name)
 
         # --- Set sensing params ---
         # TODO - implement if needed
@@ -48,6 +54,10 @@ class WildfireGymEnv(gym.Env):# # #{
         # self.lidar_observation_format = "depth_only"
         self.lidar_observation_format = "depth_and_semantics"
         self.lidar_enabled = True
+        # TODO - handle gps normalization factor based on worldgen config (arena size)?
+        self.gps_enabled = True
+        self.gps_normalization_factor = 300.0 # divide gps readings by this factor to keep in reasonable range for NN
+        self.compass_enabled = True
 
         # --- Connect to Ratsim ---
         self.conn = RoslikeUnityConnector(verbose=False)
@@ -115,6 +125,13 @@ class WildfireGymEnv(gym.Env):# # #{
             print("Warning: unknown goal observation format, defaulting to normalized_deltavec")
             return 1
 
+        if self.compass_enabled:
+            obsvdict["compass"] = spaces.Box(-1, 1, shape=(1,), dtype=np.float32)
+
+        if self.gps_enabled:
+            # TODO - handle size correctly based on worldgen config (arena size)?
+            obsvdict["gps"] = spaces.Box(-1, 1, shape=(2,), dtype=np.float32) 
+
         self.observation_space = spaces.Dict(obsvdict)
 
         # print dimensionality of observation space
@@ -148,6 +165,12 @@ class WildfireGymEnv(gym.Env):# # #{
 
         print("Resetting environment. Episode number: " + str(self.num_episodes))
 
+        # If curriculum is being used, update worldgen config based on curriculum progression
+        if self.curriculum is not None:
+            worldgen_config, sensor_config, action_config, reward_config = self.curriculum.get_worldconfig_for_episode(self.num_episodes)
+            print(f"Curriculum provided worldgen config for episode {self.num_episodes}: {worldgen_config}")
+            self.worldgen_config = worldgen_config
+            self.reward_config = reward_config
 
         # Change seed if using metaworldgen
         if self.world_seed_generator is not None:
@@ -214,9 +237,10 @@ class WildfireGymEnv(gym.Env):# # #{
         obs = self._parse_observation(msgs)
         reward = self._compute_reward(msgs)
         terminated = self._check_terminated(msgs)
-        truncated = self.step_count >= self.max_steps
+        max_steps = self.reward_config.get("max_steps", 1000)
+        truncated = self.step_count >= max_steps
         if truncated:
-            print("Truncating episode due to max steps reached: " + str(self.max_steps))
+            print("Truncating episode due to max steps reached: " + str(max_steps))
         if terminated:
             print("Terminating episode at step " + str(self.step_count) + " with reward " + str(reward))
 
@@ -409,7 +433,6 @@ class WildfireGymEnv(gym.Env):# # #{
     # # #}
 
     # --- Sensor helpers ---
-
     def _parse_observation(self, msgs):# # #{
         # This is where your sensor parsing lives
         lidar = self._extract_lidar(msgs)
@@ -436,6 +459,16 @@ class WildfireGymEnv(gym.Env):# # #{
             resdict["lidar"] = lidar
         if not self.goal_observation_format == "none":
             resdict["goal"] = goal
+
+        if self.compass_enabled:
+            compass = self._extract_compass(msgs)
+            resdict["compass"] = compass
+
+        if self.gps_enabled:
+            gps = self._extract_gps(msgs)
+            resdict["gps"] = gps
+
+
         return resdict
 # # #}
 
@@ -471,6 +504,38 @@ class WildfireGymEnv(gym.Env):# # #{
             return np.concatenate([dists, semantics], axis=0)
 
         return dists# # #}
+
+    def _extract_gps(self, msgs):# # #{
+        pose_relative_to_start_topic = "/rat1_pose_from_start"
+        res = np.zeros(2, dtype=np.float32)
+        if not pose_relative_to_start_topic in msgs.keys():
+            print("Warning: GPS message not found in msgs.")
+            print("Which topics are available:", list(msgs.keys()))
+            return res
+        pose_msg = msgs[pose_relative_to_start_topic][0]
+        res[0] = pose_msg.forward / self.gps_normalization_factor
+        res[1] = pose_msg.left / self.gps_normalization_factor
+        if np.abs(res[0]) > 1.0 or np.abs(res[1]) > 1.0:
+            print("Warning: GPS reading exceeds normalization bounds, consider increasing normalization factor.")
+        # print("GPS reading (normalized): " + str(res))
+        return res# # #}
+
+    def _extract_compass(self, msgs):# # #{
+        pose_relative_to_start_topic = "/rat1_pose_from_start"
+        res = np.zeros(1, dtype=np.float32)
+        if not pose_relative_to_start_topic in msgs.keys():
+            print("Warning: Compass message not found in msgs.")
+            print("Which topics are available:", list(msgs.keys()))
+            return res
+        pose_msg = msgs[pose_relative_to_start_topic][0]
+        # heading = pose_msg.radiansCounterClockwise / np.pi # normalize to [-1, 1]
+        # the input data can be outsie of [-pi, pi] range due to how we handle rotation in ratsim, so we need to wrap it to that range before normalizing
+        heading = np.arctan2(np.sin(pose_msg.radiansCounterClockwise), np.cos(pose_msg.radiansCounterClockwise)) / np.pi
+
+        res[0] = heading
+        # print("Compass reading (normalized heading): " + str(res))
+        return res
+# # #}
 
     def _extract_goal(self, msgs):# # #{
         return np.zeros(2, dtype=np.float32)# # #}

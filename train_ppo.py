@@ -2,8 +2,13 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 
 from ratsim_wildfire_gym_env.env import WildfireGymEnv
-from ratsim_wildfire_gym_env.curricula import get_curriculum
+from ratsim_wildfire_gym_env.curricula import *
+
 import sys
+
+
+# RECURRENT
+from sb3_contrib import RecurrentPPO  # Changed from stable_baselines3 import PPO
 
 
 curriculum_name = ""
@@ -18,20 +23,21 @@ def make_env():
         "startAndGoalClearingDistance": 5.0,
         # "arenaWidth": 1000.0, # have to be float for proper msg conversion
         # "arenaHeight": 1500.0,
-        "arenaWidth": 300.0, # have to be float for proper msg conversion
-        "arenaHeight": 300.0,
-        "treeDensity": 0.01,
+        "arenaWidth": 150.0, # have to be float for proper msg conversion
+        "arenaHeight": 150.0,
+        # "treeDensity": 0.01,
+        "treeDensity": 0.00,
         # "treeDensity": 0.0,
         "treeOscillationEnabled" : False,
-        # "houseNumerosity" : 5.0,
-        "houseNumerosity" : 0.0,
+        "houseNumerosity" : 20.0,
+        # "houseNumerosity" : 0.0,
         "houseDoorDefaultType" : "none",
-        # "rewardNumerosity" : 1.0,
-        # "rewardDistribution" : "houses",
+        "rewardNumerosity" : 1.0,
+        "rewardDistribution" : "houses",
         # "rewardNumerosity" : 0.02,
-        "rewardNumerosity" : 0.005,
         # "rewardNumerosity" : 0.0,
-        "rewardDistribution" : "everywhere",
+        # "rewardNumerosity" : 0.005,
+        # "rewardDistribution" : "everywhere",
     }
 
     sensor_config = {
@@ -39,8 +45,8 @@ def make_env():
     }
 
     action_config = {
-        # "control_mode": "acceleration",
-        "control_mode": "velocity",
+        "control_mode": "acceleration",
+        # "control_mode": "velocity",
     }
 
     metaworldgen_cfg = {
@@ -50,11 +56,11 @@ def make_env():
     reward_config = {
         "hard_collision_reward" : -100,
         "reward_pickup_reward" : 20,
+        "max_steps" : 500,
     }
 
     if curriculum_name != "":
         print(f"Using curriculum: {curriculum_name}")
-        worldgen_config, sensor_config, action_config, reward_config = get_curriculum(curriculum_name)
 
     return WildfireGymEnv(
         worldgen_config=worldgen_config,
@@ -62,8 +68,7 @@ def make_env():
         action_config=action_config,
         reward_config=reward_config,
         metaworldgen_config=metaworldgen_cfg,
-        # max_steps=400,
-        max_steps=800,
+        curriculum_name=curriculum_name,
     )
 
 
@@ -77,6 +82,8 @@ def main():
     # SB3 *requires* a vectorized env
     env = make_vec_env(make_env, n_envs=1)
 
+    # model = RecurrentPPO(
+        # policy="MultiInputLstmPolicy",
     model = PPO(
         policy="MultiInputPolicy",
         env=env,
@@ -88,7 +95,15 @@ def main():
         tensorboard_log="./tb_wildfire",
     )
 
-    model.learn(total_timesteps=1_000_000, callback=CustomMetricsCallback())
+    max_steps = 1_000_000
+
+    # # if curriculum is used, we want the curriculum to control the max number of steps
+    # if curriculum_name != "":
+    #     cur = build_curriculum(curriculum_name)
+    #     max_steps = cur.get_total_length()
+    #     print(f"Curriculum total length (max steps): {max_steps}")
+
+    model.learn(total_timesteps=max_steps, callback=CustomMetricsCallback())
 
     model.save("models/ppo_wildfire_trained")
 
