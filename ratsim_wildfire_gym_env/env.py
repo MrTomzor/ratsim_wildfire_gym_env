@@ -141,10 +141,10 @@ class WildfireGymEnv(gym.Env):# # #{
         self.step_count = 0
         self.num_episodes += 1
 
-        if self.num_episodes == 200:
-            print("MANY EPISODES, SWITCHING TO BIGGER ENV!")
-            self.worldgen_config["arenaWidth"] *= 10
-            self.worldgen_config["arenaHeight"] *= 10
+        # if self.num_episodes == 200:
+        #     print("MANY EPISODES, SWITCHING TO BIGGER ENV!")
+        #     self.worldgen_config["arenaWidth"] *= 10
+        #     self.worldgen_config["arenaHeight"] *= 10
 
         print("Resetting environment. Episode number: " + str(self.num_episodes))
 

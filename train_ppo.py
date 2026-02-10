@@ -2,6 +2,11 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 
 from ratsim_wildfire_gym_env.env import WildfireGymEnv
+from ratsim_wildfire_gym_env.curricula import get_curriculum
+import sys
+
+
+curriculum_name = ""
 
 
 def make_env():
@@ -13,8 +18,8 @@ def make_env():
         "startAndGoalClearingDistance": 5.0,
         # "arenaWidth": 1000.0, # have to be float for proper msg conversion
         # "arenaHeight": 1500.0,
-        "arenaWidth": 200.0, # have to be float for proper msg conversion
-        "arenaHeight": 200.0,
+        "arenaWidth": 300.0, # have to be float for proper msg conversion
+        "arenaHeight": 300.0,
         "treeDensity": 0.01,
         # "treeDensity": 0.0,
         "treeOscillationEnabled" : False,
@@ -30,7 +35,7 @@ def make_env():
     }
 
     sensor_config = {
-        "lidar_num_rays": 360,
+        # "lidar_num_rays": 360,
     }
 
     action_config = {
@@ -47,17 +52,28 @@ def make_env():
         "reward_pickup_reward" : 20,
     }
 
+    if curriculum_name != "":
+        print(f"Using curriculum: {curriculum_name}")
+        worldgen_config, sensor_config, action_config, reward_config = get_curriculum(curriculum_name)
+
     return WildfireGymEnv(
         worldgen_config=worldgen_config,
         sensor_config=sensor_config,
         action_config=action_config,
         reward_config=reward_config,
         metaworldgen_config=metaworldgen_cfg,
-        max_steps=400,
+        # max_steps=400,
+        max_steps=800,
     )
 
 
 def main():
+    # Check input args for curriculum name, if provided
+    if len(sys.argv) > 1:
+        print("setting curriculum from command line arg")
+        global curriculum_name
+        curriculum_name = sys.argv[1]
+
     # SB3 *requires* a vectorized env
     env = make_vec_env(make_env, n_envs=1)
 
@@ -78,6 +94,7 @@ def main():
 
     env.close()
 
+# # #{ Metric logging callback
 from stable_baselines3.common.callbacks import BaseCallback
 import numpy as np
 
@@ -105,7 +122,7 @@ class CustomMetricsCallback(BaseCallback):
             self.logger.record("custom/longest_step_distance", np.max(longest_step_distance))
 
         return True
-
+# # #}
 
 if __name__ == "__main__":
     main()
