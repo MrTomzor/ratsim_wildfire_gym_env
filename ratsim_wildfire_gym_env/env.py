@@ -127,6 +127,9 @@ class WildfireGymEnv(gym.Env):# # #{
         if self.metaworldgen_config is not None and "world_generation_metaseed" in self.metaworldgen_config:
             seed_generation_seed = metaworldgen_config["world_generation_metaseed"]
             self.world_seed_generator = np.random.default_rng(seed_generation_seed)
+
+        self.num_episodes = 0
+        self.reset_logging_metrics()
 # # #}
 
     # ---------------------------
@@ -136,6 +139,14 @@ class WildfireGymEnv(gym.Env):# # #{
     def reset(self, *, seed=None, options=None):# # #{
         super().reset(seed=seed)
         self.step_count = 0
+        self.num_episodes += 1
+
+        if self.num_episodes == 200:
+            print("MANY EPISODES, SWITCHING TO BIGGER ENV!")
+            self.worldgen_config["arenaWidth"] *= 10
+            self.worldgen_config["arenaHeight"] *= 10
+
+        print("Resetting environment. Episode number: " + str(self.num_episodes))
 
 
         # Change seed if using metaworldgen
@@ -153,7 +164,7 @@ class WildfireGymEnv(gym.Env):# # #{
 
         # self.conn.publish(worldgen_msg, "/wildfire_worldgen_input")
         for topic, msg in worldgen_msgs.items():
-            print(f"Publishing worldgen msg on topic /worldgen/{topic}: {msg}")
+            # print(f"Publishing worldgen msg on topic /worldgen/{topic}: {msg}")
             self.conn.publish(msg, f"/worldgen/{topic}")
         self.conn.send_messages_and_step(enable_physics_step=False)
 
@@ -171,6 +182,13 @@ class WildfireGymEnv(gym.Env):# # #{
             print("best goal distance:" + str(self.best_goal_distance))
         goal_vector = self._extract_relative_goal_vector(obs_msgs)
         self.best_goal_distance = np.linalg.norm(goal_vector)
+
+        if hasattr(self, 'longest_step_distance'):
+            print("largest step and forward velocity:")
+            print(self.longest_step_distance)
+            print(self.largest_forward_velocity)
+
+        self.reset_logging_metrics()
 
 
         return obs, {}
@@ -195,6 +213,13 @@ class WildfireGymEnv(gym.Env):# # #{
         reward = self._compute_reward(msgs)
         terminated = self._check_terminated(msgs)
         truncated = self.step_count >= self.max_steps
+        if truncated:
+            print("Truncating episode due to max steps reached: " + str(self.max_steps))
+        if terminated:
+            print("Terminating episode at step " + str(self.step_count) + " with reward " + str(reward))
+
+        # Log metrics for debugging
+        self._parse_and_log_metrics(msgs)
 
         return obs, reward, terminated, truncated, {}
 # # #}
@@ -255,8 +280,12 @@ class WildfireGymEnv(gym.Env):# # #{
         else:
             # Velocity control
             msg.forward = float(action[0]) * self.max_forward_velocity
+            msg.forward = 10 * np.sign(msg.forward) #debug 
+            self.largest_forward_velocity = max(self.largest_forward_velocity , abs(msg.forward))
+            # print("forward velocity: " + str(msg.forward))
             msg.left = 0
             msg.radiansCounterClockwise = float(action[1]) * self.max_angular_velocity
+            # msg.radiansCounterClockwise = 0 #debug
         return msg
 # # #}
 
@@ -304,17 +333,22 @@ class WildfireGymEnv(gym.Env):# # #{
     def _compute_reward(self, msgs):# # #{
         # Give reward for getting closer to goal
         goal_vector = self._extract_relative_goal_vector(msgs)
-        goal_distance = np.linalg.norm(goal_vector)
         reward = 0.0
-        if goal_distance < self.best_goal_distance:
-            reward += 1 * (self.best_goal_distance - goal_distance)
-            # print(f"Reward for getting closer to goal: {reward:.3f}")
-            self.best_goal_distance = goal_distance
+        # goal_distance = np.linalg.norm(goal_vector)
+        # if goal_distance < self.best_goal_distance:
+        #     reward += 1 * (self.best_goal_distance - goal_distance)
+        #     # print(f"Reward for getting closer to goal: {reward:.3f}")
+        #     self.best_goal_distance = goal_distance
 
         if self._get_collision_vel_if_collided(msgs) is not None:
             reward += self.reward_config.get("hard_collision_reward", -100.0)
+            self.collision_count += 1
             # print(f"Collision detected! Applying collision reward: {self.collision_reward}")
-        pickupable_reward = self._check_num_reward_objs_picked_up(msgs) * self.reward_config.get("reward_pickup_reward", 20.0)
+            print("COLLISION VEL: " + str(self._get_collision_vel_if_collided(msgs)))
+
+        num_pickup_objects = self._check_num_reward_objs_picked_up(msgs)
+        pickupable_reward = num_pickup_objects * self.reward_config.get("reward_pickup_reward", 20.0)
+        self.num_reward_objs_picked_up += num_pickup_objects
         reward += pickupable_reward
 
         if(pickupable_reward > 0):
@@ -326,11 +360,51 @@ class WildfireGymEnv(gym.Env):# # #{
     def _check_terminated(self, msgs):# # #{
 
         if self._get_collision_vel_if_collided(msgs) is not None:
+            self.collided_ended = True
             print("Terminating episode due to collision.")
             return True
 
         return False
 # # #}
+
+    # --- Logging helpers ---
+
+    def reset_logging_metrics(self):# # #{
+        self.last_logged_position = None
+        self.distance_traveled = 0.0
+        self.longest_step_distance = 0.0
+        self.largest_forward_velocity = 0.0
+        self.num_reward_objs_picked_up = 0.0
+        self.collision_count = 0
+        # # #}
+
+    def _parse_and_log_metrics(self, msgs):# # #{
+        odom_topic = "/odom"
+        if odom_topic in msgs.keys():
+            odom_msg = Twist2DMessage()
+            odom_msg = msgs[odom_topic][0]
+            deltavec_in_prev_frame = np.array([odom_msg.forward, odom_msg.left])
+
+            # step_distance = np.linalg.norm(current_pos - self.last_logged_position)
+            step_distance = np.linalg.norm(deltavec_in_prev_frame)
+            # print("Step distance traveled: " + str(step_distance))
+            if step_distance > self.longest_step_distance:
+                self.longest_step_distance = step_distance
+            self.distance_traveled += step_distance
+            # print("ADDED DISTANCE: " + str(step_distance) + ", TOTAL: " + str(self.distance_traveled))
+    # # #}
+
+    def get_distance_traveled(self):# # #{
+        return self.distance_traveled
+    # # #}
+
+    def get_reward_pickups(self):# # #{
+        return self.num_reward_objs_picked_up
+    # # #}
+
+    def get_longest_step_distance(self):# # #{
+        return self.longest_step_distance
+    # # #}
 
     # --- Sensor helpers ---
 
@@ -386,6 +460,9 @@ class WildfireGymEnv(gym.Env):# # #{
         # NORMALIZE lidar to 0-1
         dists = dists / lidar_msg.maxRange
 
+        mean_dist = np.mean(dists)
+        # print("Lidar mean distance: " + str(mean_dist))
+
         if lidar_msg.descriptors is not None and self.lidar_observation_format == "depth_and_semantics":
             semantics = np.array(lidar_msg.descriptors, dtype=np.float32)
             # one hot encoded so no normalization needed
@@ -395,3 +472,4 @@ class WildfireGymEnv(gym.Env):# # #{
 
     def _extract_goal(self, msgs):# # #{
         return np.zeros(2, dtype=np.float32)# # #}
+
