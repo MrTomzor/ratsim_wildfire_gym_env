@@ -166,7 +166,8 @@ class WildfireGymEnv(gym.Env):# # #{
         for topic, msg in worldgen_msgs.items():
             # print(f"Publishing worldgen msg on topic /worldgen/{topic}: {msg}")
             self.conn.publish(msg, f"/worldgen/{topic}")
-        self.conn.send_messages_and_step(enable_physics_step=False)
+        self.conn.send_messages_and_step(enable_physics_step=True)
+        obs_msgs = self.conn.read_messages_from_unity()
 
         # Perform one more step to let worldgen happen
         self.conn.send_messages_and_step(enable_physics_step=True)
@@ -196,6 +197,7 @@ class WildfireGymEnv(gym.Env):# # #{
 
     def step(self, action):# # #{
         self.step_count += 1
+        # print("Step count: " + str(self.step_count))
 
         # --- Send action ---
         action_msg = self._build_action_msg(action)
