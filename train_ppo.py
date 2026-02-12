@@ -11,56 +11,44 @@ import sys
 from sb3_contrib import RecurrentPPO  # Changed from stable_baselines3 import PPO
 
 
-curriculum_name = ""
+curriculum_name = "forest_to_houses_1"
+
+worldgen_config = {
+    "seed": 42, # will be overridden by metaworldgen_config
+    "mainLayout" : "suburb",
+    "numAgents": 1,
+    "startAndGoalClearingDistance": 5.0,
+    "arenaWidth": 150.0, # have to be float for proper msg conversion
+    "arenaHeight": 150.0,
+    "treeDensity": 0.00,
+    "treeOscillationEnabled" : False,
+    "houseNumerosity" : 20.0,
+    "houseDoorDefaultType" : "none",
+    "rewardNumerosity" : 1.0,
+    "rewardDistribution" : "houses",
+}
+
+sensor_config = {
+    # "lidar_num_rays": 360,
+}
+
+action_config = {
+    "control_mode": "acceleration",
+    # "control_mode": "velocity",
+}
+
+metaworldgen_cfg = {
+    "world_generation_metaseed": 666
+}
+
+reward_config = {
+    "hard_collision_reward" : -100,
+    "reward_pickup_reward" : 20,
+    "max_steps" : 500,
+}
 
 
 def make_env():
-    worldgen_config = {
-        "seed": 42, # will be overridden by metaworldgen_config
-        # "mainLayout" : "forest_frogger",
-        "mainLayout" : "suburb",
-        "numAgents": 1,
-        "startAndGoalClearingDistance": 5.0,
-        # "arenaWidth": 1000.0, # have to be float for proper msg conversion
-        # "arenaHeight": 1500.0,
-        "arenaWidth": 150.0, # have to be float for proper msg conversion
-        "arenaHeight": 150.0,
-        # "treeDensity": 0.01,
-        "treeDensity": 0.00,
-        # "treeDensity": 0.0,
-        "treeOscillationEnabled" : False,
-        "houseNumerosity" : 20.0,
-        # "houseNumerosity" : 0.0,
-        "houseDoorDefaultType" : "none",
-        "rewardNumerosity" : 1.0,
-        "rewardDistribution" : "houses",
-        # "rewardNumerosity" : 0.02,
-        # "rewardNumerosity" : 0.0,
-        # "rewardNumerosity" : 0.005,
-        # "rewardDistribution" : "everywhere",
-    }
-
-    sensor_config = {
-        # "lidar_num_rays": 360,
-    }
-
-    action_config = {
-        "control_mode": "acceleration",
-        # "control_mode": "velocity",
-    }
-
-    metaworldgen_cfg = {
-        "world_generation_metaseed": 666
-    }
-
-    reward_config = {
-        "hard_collision_reward" : -100,
-        "reward_pickup_reward" : 20,
-        "max_steps" : 500,
-    }
-
-    if curriculum_name != "":
-        print(f"Using curriculum: {curriculum_name}")
 
     return WildfireGymEnv(
         worldgen_config=worldgen_config,
@@ -105,7 +93,7 @@ def main():
 
     model.learn(total_timesteps=max_steps, callback=CustomMetricsCallback())
 
-    model.save("models/ppo_wildfire_trained")
+    model.save("models/ppo_trained")
 
     env.close()
 

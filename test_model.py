@@ -37,7 +37,7 @@ def make_env():
     
     print(f"Testing with worldname: {worldconfig_name}")
     if worldconfig_name != "":
-        worldgen_config, sensor_config, action_config, reward_config = get_named_worldconfig(worldconfig_name)
+        worldgen_config, sensor_config, action_config, reward_config = get_named_envconfig(worldconfig_name)
     
     return WildfireGymEnv(
         worldgen_config=worldgen_config,

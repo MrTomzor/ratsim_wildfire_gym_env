@@ -39,6 +39,21 @@ class WildfireGymEnv(gym.Env):# # #{
         if curriculum_name != "":
             print(f"Using curriculum: {curriculum_name}")
             self.curriculum = build_curriculum(curriculum_name)
+            default_envconfig = self.curriculum.get_default_envconfig()
+            default_sensor_config = default_envconfig[1]
+            default_action_config = default_envconfig[2]
+            default_reward_config = default_envconfig[3]
+
+            # If sensor, action or reward configs are empty/null, fill them in from curriculum
+            if self.sensor_config is None or len(self.sensor_config) == 0:
+                self.sensor_config = default_sensor_config
+                print("Using curriculum's default sensor config: " + str(self.sensor_config))
+            if self.action_config is None or len(self.action_config) == 0:
+                self.action_config = default_action_config
+                print("Using curriculum's default action config: " + str(self.action_config))
+            if self.reward_config is None or len(self.reward_config) == 0:
+                self.reward_config = default_reward_config
+                print("Using curriculum's default reward config: " + str(self.reward_config))
 
         # --- Set sensing params ---
         # TODO - implement if needed
@@ -167,10 +182,11 @@ class WildfireGymEnv(gym.Env):# # #{
 
         # If curriculum is being used, update worldgen config based on curriculum progression
         if self.curriculum is not None:
-            worldgen_config, sensor_config, action_config, reward_config = self.curriculum.get_worldconfig_for_episode(self.num_episodes)
-            print(f"Curriculum provided worldgen config for episode {self.num_episodes}: {worldgen_config}")
+            worldgen_config, is_new_chapter = self.curriculum.get_worldconfig_for_episode(self.num_episodes)
+            if is_new_chapter:
+                print(f"Curriculum advanced to new chapter at episode {self.num_episodes}!")
+                print(f"New worldgen config: {worldgen_config}")
             self.worldgen_config = worldgen_config
-            self.reward_config = reward_config
 
         # Change seed if using metaworldgen
         if self.world_seed_generator is not None:

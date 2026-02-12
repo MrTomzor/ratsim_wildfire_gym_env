@@ -1,22 +1,35 @@
-class Curriculum:
+import numpy as np
+
+class Curriculum:# # #{
     def __init__(self, cw = [], cl = []):
-        self.chapters_worldconfigs = cw
+        self.chapters_envconfigs = cw
         self.chapter_lengths = cl
 
     def get_worldconfig_for_episode(self, episode_num):
+        is_new_chapter = False
+
         cumulative_length = 0
         for i, chapter_length in enumerate(self.chapter_lengths):
             cumulative_length += chapter_length
             if episode_num < cumulative_length:
-                return self.chapters_worldconfigs[i]
+                if episode_num == cumulative_length - chapter_length:
+                    is_new_chapter = True
+                return self.chapters_envconfigs[i][0], is_new_chapter
 
         print("curriculum episode number exceeds total length, returning last chapter's worldconfig")
-        return self.chapters_worldconfigs[-1]
+        return self.chapters_envconfigs[-1], is_new_chapter
 
     def get_total_length(self):
         return sum(self.chapter_lengths)
 
-def get_named_worldconfig(name):
+    def get_default_envconfig(self):
+        # just return the configs from the first chapter, since they are not expected to change across chapters
+        if len(self.chapters_envconfigs) == 0:
+            raise ValueError("Curriculum has no chapters, cannot get default configs")
+        return self.chapters_envconfigs[0]
+# # #}
+
+def get_named_envconfig(name):# # #{
     worldgen_config = {}
     sensor_config = {}
 
@@ -69,13 +82,14 @@ def get_named_worldconfig(name):
         raise ValueError(f"Unknown curriculum name: {name}")
 
     return worldgen_config, sensor_config, action_config, reward_config
+# # #}
 
 def build_curriculum(name):
     if name == "forest_to_houses_1":
         return Curriculum(
             cw = [
-                get_named_worldconfig("forest_foraging_easy_1"),
-                get_named_worldconfig("houses_only_easy_1"),
+                get_named_envconfig("forest_foraging_easy_1"),
+                get_named_envconfig("houses_only_easy_1"),
             ],
             cl = [
                 300, # length of chapter 1 in episodes
