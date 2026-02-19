@@ -17,7 +17,7 @@ class Curriculum:# # #{
                 return self.chapters_envconfigs[i][0], is_new_chapter
 
         print("curriculum episode number exceeds total length, returning last chapter's worldconfig")
-        return self.chapters_envconfigs[-1], is_new_chapter
+        return self.chapters_envconfigs[-1][0], is_new_chapter
 
     def get_total_length(self):
         return sum(self.chapter_lengths)

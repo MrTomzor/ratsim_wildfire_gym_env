@@ -98,9 +98,9 @@ class WildfireGymEnv(gym.Env):# # #{
         # self.max_forward_velocity = self.action_config.get("max_forward_velocity", 20.0)
         # self.max_angular_velocity = self.action_config.get("max_angular_velocity", 1.0)
         self.max_forward_velocity = self.action_config.get("max_forward_velocity", 10.0)
-        self.max_angular_velocity = self.action_config.get("max_angular_velocity", 0.5)
-        self.max_forward_acceleration = self.action_config.get("max_forward_acceleration", 10.0)
-        self.max_angular_velocity = self.action_config.get("max_forward_acceleration", 10.0)
+        self.max_angular_velocity = self.action_config.get("max_angular_velocity", 1.5)
+        self.max_forward_acceleration = self.action_config.get("max_forward_acceleration", 100)
+        self.max_angular_acceleration = self.action_config.get("max_angular_acceleration", 13)
         self.vel_twist_msg_out_topic = "/cmd_vel"
         self.accel_twist_msg_out_topic = "/cmd_accel"
         # self.control_mode = self.action_config.get("control_mode", "velocity") 
@@ -318,7 +318,7 @@ class WildfireGymEnv(gym.Env):# # #{
             # Acceleration control
             msg.forward = float(action[0]) * self.max_forward_acceleration
             msg.left = 0
-            msg.radiansCounterClockwise = float(action[1]) * self.max_angular_velocity
+            msg.radiansCounterClockwise = float(action[1]) * self.max_angular_acceleration
         else:
             # Velocity control
             msg.forward = float(action[0]) * self.max_forward_velocity

@@ -5,6 +5,8 @@ from ratsim_wildfire_gym_env.env import WildfireGymEnv
 from ratsim_wildfire_gym_env.curricula import *
 
 import sys
+import time
+from pynput import keyboard
 
 
 # RECURRENT
@@ -12,7 +14,6 @@ from sb3_contrib import RecurrentPPO  # Changed from stable_baselines3 import PP
 
 
 curriculum_name = "forest_to_houses_1"
-is_recurrent = False
 
 worldgen_config = {
     "seed": 42, # will be overridden by metaworldgen_config
@@ -39,8 +40,7 @@ action_config = {
 }
 
 metaworldgen_cfg = {
-    # "world_generation_metaseed": 666
-    "world_generation_metaseed": 1
+    "world_generation_metaseed": 666
 }
 
 reward_config = {}
@@ -63,54 +63,73 @@ def make_env():
     )
 
 
+# Track currently pressed keys
+pressed_keys = set()
+
+def on_press(key):
+    pressed_keys.add(key)
+
+def on_release(key):
+    pressed_keys.discard(key)
+
+def get_action():
+    """Map WASD keys to [linear, angular] action values."""
+    linear = 0.0
+    angular = 0.0
+
+    if keyboard.KeyCode.from_char('w') in pressed_keys:
+        linear += 1.0
+    if keyboard.KeyCode.from_char('s') in pressed_keys:
+        linear -= 1.0
+    if keyboard.KeyCode.from_char('a') in pressed_keys:
+        angular += 1.0
+    if keyboard.KeyCode.from_char('d') in pressed_keys:
+        angular -= 1.0
+
+    return [linear, angular]
+
 def main():
-    # Check input args for curriculum name, if provided
     if len(sys.argv) > 1:
         print("setting curriculum from command line arg")
         global curriculum_name
         curriculum_name = sys.argv[1]
 
-    # SB3 *requires* a vectorized env
-    env = make_vec_env(make_env, n_envs=1)
-    model = None
+    env = make_env()
 
-    if is_recurrent:
-        model = RecurrentPPO(
-            policy="MultiInputLstmPolicy",
-            env=env,
-            verbose=1,
-            n_steps=2048,
-            batch_size=64,
-            learning_rate=3e-4,
-            gamma=0.99,
-            tensorboard_log="./tb_wildfire",
-        )
+    TARGET_FPS = 10
+    dt = 1.0 / TARGET_FPS
 
-    else:
-        model = PPO(
-            policy="MultiInputPolicy",
-            env=env,
-            verbose=1,
-            n_steps=2048,
-            batch_size=64,
-            learning_rate=3e-4,
-            gamma=0.99,
-            tensorboard_log="./tb_wildfire",
-        )
+    # Start listening to keyboard in non-blocking background thread
+    listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+    listener.start()
 
-    max_steps = 1_000_000
+    print("Use WASD to control. Press Ctrl+C to quit.")
 
-    # # if curriculum is used, we want the curriculum to control the max number of steps
-    # if curriculum_name != "":
-    #     cur = build_curriculum(curriculum_name)
-    #     max_steps = cur.get_total_length()
-    #     print(f"Curriculum total length (max steps): {max_steps}")
+    obs, _ = env.reset()
+    terminated = False
+    truncated = False
 
-    model.learn(total_timesteps=max_steps, callback=CustomMetricsCallback())
+    try:
+        while True:
+            frame_start = time.perf_counter()
 
-    model.save("models/ppo_trained")
+            action = get_action()
+            obs, reward, terminated, truncated, info = env.step(action)
 
-    env.close()
+            if terminated or truncated:
+                obs, _ = env.reset()
+
+            # Sleep for remainder of frame to maintain 60fps
+            elapsed = time.perf_counter() - frame_start
+            sleep_time = dt - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+    except KeyboardInterrupt:
+        print("Exiting...")
+    finally:
+        listener.stop()
+        env.close()
 
 # # #{ Metric logging callback
 from stable_baselines3.common.callbacks import BaseCallback
