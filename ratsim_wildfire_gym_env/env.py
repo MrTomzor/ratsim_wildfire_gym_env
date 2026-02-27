@@ -181,12 +181,13 @@ class WildfireGymEnv(gym.Env):# # #{
         print("Resetting environment. Episode number: " + str(self.num_episodes))
 
         # If curriculum is being used, update worldgen config based on curriculum progression
-        if self.curriculum is not None:
-            worldgen_config, is_new_chapter = self.curriculum.get_worldconfig_for_episode(self.num_episodes)
-            if is_new_chapter:
-                print(f"Curriculum advanced to new chapter at episode {self.num_episodes}!")
-                print(f"New worldgen config: {worldgen_config}")
-            self.worldgen_config = worldgen_config
+        # TODO - reimplement curriculum functionality with blender
+        # if self.curriculum is not None:
+        #     worldgen_config, is_new_chapter = self.curriculum.get_worldconfig_for_episode(self.num_episodes)
+        #     if is_new_chapter:
+        #         print(f"Curriculum advanced to new chapter at episode {self.num_episodes}!")
+        #         print(f"New worldgen config: {worldgen_config}")
+        #     self.worldgen_config = worldgen_config
 
         # Change seed if using metaworldgen
         if self.world_seed_generator is not None:
@@ -203,6 +204,7 @@ class WildfireGymEnv(gym.Env):# # #{
         if options is not None:
             cfg.update(options)
         config_json = to_entries_json(cfg)
+        print("Sending json worldgen config: " + config_json)
         self.conn.publish(StringMessage(data=config_json), "/sim_control/world_config")
         self.conn.publish(BoolMessage(data=True), "/sim_control/reset_episode")
         self.conn.send_messages_and_step(enable_physics_step=True)
@@ -253,7 +255,7 @@ class WildfireGymEnv(gym.Env):# # #{
         obs = self._parse_observation(msgs)
         reward = self._compute_reward(msgs)
         terminated = self._check_terminated(msgs)
-        max_steps = self.reward_config.get("max_steps", 1000)
+        max_steps = self.reward_config.get("max_steps", 200)
         truncated = self.step_count >= max_steps
         if truncated:
             print("Truncating episode due to max steps reached: " + str(max_steps))

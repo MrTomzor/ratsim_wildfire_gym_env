@@ -12,7 +12,8 @@ import sys
 from sb3_contrib import RecurrentPPO  # Changed from stable_baselines3 import PPO
 
 
-curriculum_name = "forest_to_houses_1"
+# curriculum_name = "forest_to_houses_1"
+curriculum_name = ""
 is_recurrent = False
 
 # Load base config from preset, then override for training
