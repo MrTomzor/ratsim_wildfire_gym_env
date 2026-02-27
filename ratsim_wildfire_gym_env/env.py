@@ -4,7 +4,6 @@ from gymnasium import spaces
 
 from ratsim.roslike_unity_connector.connector import BoolMessage, RoslikeUnityConnector
 from ratsim.roslike_unity_connector.message_definitions import (
-    # WildfireWorldGenMessage,
     Int32Message,
     Float32Message,
     BoolMessage,
@@ -12,6 +11,7 @@ from ratsim.roslike_unity_connector.message_definitions import (
     Twist2DMessage,
     Lidar2DMessage,
 )
+from ratsim.config_blender import to_entries_json
 
 from ratsim_wildfire_gym_env.curricula import *
 
@@ -198,13 +198,13 @@ class WildfireGymEnv(gym.Env):# # #{
             options["seed"] = new_world_seed
 
         # --- World generation ---
-        worldgen_msgs = self._build_worldgen_msgs(options)
-        worldgen_msgs["requested"] = BoolMessage(data=True)
-
-        # self.conn.publish(worldgen_msg, "/wildfire_worldgen_input")
-        for topic, msg in worldgen_msgs.items():
-            # print(f"Publishing worldgen msg on topic /worldgen/{topic}: {msg}")
-            self.conn.publish(msg, f"/worldgen/{topic}")
+        # Send config as unified JSON via new config pipeline
+        cfg = dict(self.worldgen_config)
+        if options is not None:
+            cfg.update(options)
+        config_json = to_entries_json(cfg)
+        self.conn.publish(StringMessage(data=config_json), "/sim_control/world_config")
+        self.conn.publish(BoolMessage(data=True), "/sim_control/reset_episode")
         self.conn.send_messages_and_step(enable_physics_step=True)
         obs_msgs = self.conn.read_messages_from_unity()
 
@@ -248,7 +248,7 @@ class WildfireGymEnv(gym.Env):# # #{
         self.conn.send_messages_and_step(enable_physics_step=True)
         msgs = self.conn.read_messages_from_unity()
 
-        # self.conn.log_connection_stats()
+        self.conn.log_connection_stats()
 
         obs = self._parse_observation(msgs)
         reward = self._compute_reward(msgs)

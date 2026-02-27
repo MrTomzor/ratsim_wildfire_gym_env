@@ -3,6 +3,7 @@ from stable_baselines3.common.env_util import make_vec_env
 
 from ratsim_wildfire_gym_env.env import WildfireGymEnv
 from ratsim_wildfire_gym_env.curricula import *
+from ratsim.config_blender import blend_presets
 
 import sys
 
@@ -14,20 +15,12 @@ from sb3_contrib import RecurrentPPO  # Changed from stable_baselines3 import PP
 curriculum_name = "forest_to_houses_1"
 is_recurrent = False
 
-worldgen_config = {
+# Load base config from preset, then override for training
+worldgen_config = blend_presets("world", ["default"])
+worldgen_config.update({
     "seed": 42, # will be overridden by metaworldgen_config
-    "mainLayout" : "suburb",
-    "numAgents": 1,
-    "startAndGoalClearingDistance": 5.0,
-    "arenaWidth": 150.0, # have to be float for proper msg conversion
-    "arenaHeight": 150.0,
-    "treeDensity": 0.00,
-    "treeOscillationEnabled" : False,
-    "houseNumerosity" : 20.0,
-    "houseDoorDefaultType" : "none",
-    "rewardNumerosity" : 1.0,
-    "rewardDistribution" : "houses",
-}
+    "tree_generation/density": 0.01,
+})
 
 sensor_config = {
     # "lidar_num_rays": 360,
