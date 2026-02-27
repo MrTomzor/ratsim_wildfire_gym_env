@@ -38,8 +38,9 @@ No test suite exists; testing is done via the `test_*.py` evaluation/interaction
 
 `WildfireGymEnv(gym.Env)` — the main class. Implements standard Gymnasium API (`reset()`, `step()`, `close()`).
 
-**Configuration**: Four config dicts control behavior:
-- `worldgen_config`: Arena size, tree density, house count, reward distribution
+**Configuration**: Five config dicts control behavior:
+- `worldgen_config`: Arena size, tree density, house count, reward distribution — sent to Unity each `reset()`
+- `agent_config`: Agent prefab, sensors, actuators — loaded via `blend_presets("agents", ...)`, sent to Unity once during `__init__()` on `/sim_control/agent_config`
 - `sensor_config`: Lidar parameters (ray count, range, semantics)
 - `action_config`: Control mode (`"velocity"` or `"acceleration"`)
 - `reward_config`: Reward values, max steps per episode
@@ -54,7 +55,7 @@ No test suite exists; testing is done via the `test_*.py` evaluation/interaction
 
 **ROS-like topics** (via `RoslikeUnityConnector`):
 - Subscribed: `/lidar2d`, `/rat1_pose`, `/rat1_pose_from_start`, `/wildfire_goal_position`, `/collisions`, `/reward_pickup`, `/odom`
-- Published: `/cmd_vel` or `/cmd_accel`, `/worldgen/*`, `/sim_control/scene_select`
+- Published: `/cmd_vel` or `/cmd_accel`, `/sim_control/world_config`, `/sim_control/agent_config`, `/sim_control/reset_episode`, `/sim_control/scene_select`
 
 ### Curriculum System (`ratsim_wildfire_gym_env/curricula.py`)
 
@@ -71,6 +72,7 @@ Uses SB3's `PPO` or `RecurrentPPO`. Custom `CustomMetricsCallback` logs distance
 ## Key Patterns
 
 - Episode terminates on collision (terminated=True) or after max_steps (truncated=True)
-- World generation happens in `reset()` via publishing to `/worldgen/*` topics then requesting generation
+- Agent config is sent once during `__init__()` via `/sim_control/agent_config` (Unity's `AgentLoader` spawns the agent each episode based on this)
+- World generation happens in `reset()` via publishing world config JSON to `/sim_control/world_config` then triggering `/sim_control/reset_episode`
 - `metaworldgen_config` controls deterministic seed generation for reproducible procedural environments
 - Collision detection uses a buffered approach (collision velocity tracked via `/collisions` topic)
