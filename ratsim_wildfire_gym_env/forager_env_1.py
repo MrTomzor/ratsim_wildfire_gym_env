@@ -49,7 +49,7 @@ class ForagerEnv(gym.Env):
     def step(self, action):
         # Apply the action and return the new state, reward, done flag, and info
 
-        # Convert the action to a Twist2DMessage
+        # Convert the action to a TwistMessage
         twist_msg = self.model_output_to_twist_msg(action)
 
         # Handle comms with Unity
@@ -89,7 +89,7 @@ class ForagerEnv(gym.Env):
         forward_vel = norm_forward_vel * self.maxvel
         angular_vel = norm_angular_vel * self.maxangvel
 
-        return Twist2DMessage(forward_vel, 0, angular_vel)
+        return TwistMessage(linear_x=forward_vel, linear_y=0, linear_z=0, angular_x=0, angular_y=0, angular_z=angular_vel)
 
     def lidar_msg_to_observation(self, lidar_msg : Lidar2DMessage):
         # Convert the lidar message to an observation vector

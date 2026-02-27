@@ -8,10 +8,12 @@ from ratsim.roslike_unity_connector.message_definitions import (
     Float32Message,
     BoolMessage,
     StringMessage,
-    Twist2DMessage,
+    TwistMessage,
+    PoseMessage,
     Lidar2DMessage,
 )
 from ratsim.config_blender import to_entries_json
+from ratsim.transforms import yaw_from_quat
 
 from ratsim_wildfire_gym_env.curricula import *
 
@@ -256,7 +258,7 @@ class WildfireGymEnv(gym.Env):# # #{
 
         # --- Send action ---
         action_msg = self._build_action_msg(action)
-        print("Action message to send: forward " + str(action_msg.forward) + ", angular " + str(action_msg.radiansCounterClockwise))
+        print("Action message to send: linear_x " + str(action_msg.linear_x) + ", angular_z " + str(action_msg.angular_z))
         print("Control mode: " + str(self.control_mode))
         if self.control_mode == "acceleration":
             self.conn.publish(action_msg, self.accel_twist_msg_out_topic)
@@ -331,21 +333,27 @@ class WildfireGymEnv(gym.Env):# # #{
 
     def _build_action_msg(self, action):# # #{
         # Replace with your real message
-        msg = Twist2DMessage()
+        msg = TwistMessage()
         if self.control_mode == "acceleration":
             # Acceleration control
-            msg.forward = float(action[0]) * self.max_forward_acceleration
-            msg.left = 0
-            msg.radiansCounterClockwise = float(action[1]) * self.max_angular_acceleration
+            msg.linear_x = float(action[0]) * self.max_forward_acceleration
+            msg.linear_y = 0
+            msg.linear_z = 0
+            msg.angular_x = 0
+            msg.angular_y = 0
+            msg.angular_z = float(action[1]) * self.max_angular_acceleration
         else:
             # Velocity control
-            msg.forward = float(action[0]) * self.max_forward_velocity
-            msg.forward = 10 * np.sign(msg.forward) #debug 
-            self.largest_forward_velocity = max(self.largest_forward_velocity , abs(msg.forward))
-            # print("forward velocity: " + str(msg.forward))
-            msg.left = 0
-            msg.radiansCounterClockwise = float(action[1]) * self.max_angular_velocity
-            # msg.radiansCounterClockwise = 0 #debug
+            msg.linear_x = float(action[0]) * self.max_forward_velocity
+            msg.linear_x = 10 * np.sign(msg.linear_x) #debug
+            self.largest_forward_velocity = max(self.largest_forward_velocity , abs(msg.linear_x))
+            # print("forward velocity: " + str(msg.linear_x))
+            msg.linear_y = 0
+            msg.linear_z = 0
+            msg.angular_x = 0
+            msg.angular_y = 0
+            msg.angular_z = float(action[1]) * self.max_angular_velocity
+            # msg.angular_z = 0 #debug
         return msg
 # # #}
 
@@ -371,12 +379,12 @@ class WildfireGymEnv(gym.Env):# # #{
         goal_msg = msgs[self.goal_pose_msg_in_topic][0]
         agent_msg = msgs[self.agent_pose_msg_in_topic][0]
 
-        gx = goal_msg.forward
-        gy = goal_msg.left
+        gx = goal_msg.x
+        gy = goal_msg.y
 
-        ax = agent_msg.forward
-        ay = agent_msg.left
-        a_theta = agent_msg.radiansCounterClockwise
+        ax = agent_msg.x
+        ay = agent_msg.y
+        a_theta = yaw_from_quat(agent_msg.qx, agent_msg.qy, agent_msg.qz, agent_msg.qw)
 
         # Compute relative vector, taking into account agent orientation
         dx = gx - ax
@@ -441,9 +449,8 @@ class WildfireGymEnv(gym.Env):# # #{
     def _parse_and_log_metrics(self, msgs):# # #{
         odom_topic = "/odom"
         if odom_topic in msgs.keys():
-            odom_msg = Twist2DMessage()
             odom_msg = msgs[odom_topic][0]
-            deltavec_in_prev_frame = np.array([odom_msg.forward, odom_msg.left])
+            deltavec_in_prev_frame = np.array([odom_msg.x, odom_msg.y])
 
             # step_distance = np.linalg.norm(current_pos - self.last_logged_position)
             step_distance = np.linalg.norm(deltavec_in_prev_frame)
@@ -548,8 +555,8 @@ class WildfireGymEnv(gym.Env):# # #{
             print("Which topics are available:", list(msgs.keys()))
             return res
         pose_msg = msgs[pose_relative_to_start_topic][0]
-        res[0] = pose_msg.forward / self.gps_normalization_factor
-        res[1] = pose_msg.left / self.gps_normalization_factor
+        res[0] = pose_msg.x / self.gps_normalization_factor
+        res[1] = pose_msg.y / self.gps_normalization_factor
         if np.abs(res[0]) > 1.0 or np.abs(res[1]) > 1.0:
             print("Warning: GPS reading exceeds normalization bounds, consider increasing normalization factor.")
         # print("GPS reading (normalized): " + str(res))
@@ -563,9 +570,8 @@ class WildfireGymEnv(gym.Env):# # #{
             print("Which topics are available:", list(msgs.keys()))
             return res
         pose_msg = msgs[pose_relative_to_start_topic][0]
-        # heading = pose_msg.radiansCounterClockwise / np.pi # normalize to [-1, 1]
-        # the input data can be outsie of [-pi, pi] range due to how we handle rotation in ratsim, so we need to wrap it to that range before normalizing
-        heading = np.arctan2(np.sin(pose_msg.radiansCounterClockwise), np.cos(pose_msg.radiansCounterClockwise)) / np.pi
+        yaw = yaw_from_quat(pose_msg.qx, pose_msg.qy, pose_msg.qz, pose_msg.qw)
+        heading = yaw / np.pi  # normalize to [-1, 1]
 
         res[0] = heading
         # print("Compass reading (normalized heading): " + str(res))
