@@ -3,7 +3,7 @@ from stable_baselines3.common.env_util import make_vec_env
 
 from ratsim_wildfire_gym_env.env import WildfireGymEnv
 from ratsim_wildfire_gym_env.curricula import *
-from ratsim.config_blender import blend_presets
+from ratsim.config_blender import blend_presets, load_preset
 
 import sys
 
@@ -22,6 +22,8 @@ worldgen_config.update({
     "seed": 42, # will be overridden by metaworldgen_config
     "tree_generation/density": 0.01,
 })
+
+agent_config = blend_presets("agents", ["sphereagent_2d_lidar"])
 
 sensor_config = {
     # "lidar_num_rays": 360,
@@ -49,6 +51,7 @@ def make_env():
 
     return WildfireGymEnv(
         worldgen_config=worldgen_config,
+        agent_config=agent_config,
         sensor_config=sensor_config,
         action_config=action_config,
         reward_config=reward_config,

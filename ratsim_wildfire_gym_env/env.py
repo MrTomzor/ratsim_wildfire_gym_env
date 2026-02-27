@@ -21,6 +21,7 @@ class WildfireGymEnv(gym.Env):# # #{
     def __init__(
         self,
         worldgen_config: dict,
+        agent_config: dict,
         sensor_config: dict,
         action_config: dict,
         reward_config: dict,
@@ -30,6 +31,7 @@ class WildfireGymEnv(gym.Env):# # #{
         super().__init__()
 
         self.worldgen_config = worldgen_config
+        self.agent_config = agent_config
         self.sensor_config = sensor_config
         self.action_config = action_config
         self.reward_config = reward_config
@@ -62,6 +64,7 @@ class WildfireGymEnv(gym.Env):# # #{
         self.agent_pose_msg_in_topic = "/rat1_pose"
 
         # TODO - metaparams 
+        self.num_episodes = 0
         self.goal_observation_format = "none" # or deltavec, or heading
         # self.goal_observation_format = "normalized_deltavec" # or deltavec, or heading
         # self.goal_observation_format = "deltavec" # or deltavec, or heading
@@ -81,6 +84,24 @@ class WildfireGymEnv(gym.Env):# # #{
         # --- Select scene ---
         self._select_scene("Wildfire")
         print("Selected Wildfire scene in Ratsim.")
+
+        # --- Send agent config ---
+        agent_config_json = to_entries_json(self.agent_config)
+        print("Sending agent config: " + agent_config_json)
+        self.conn.publish(StringMessage(data=agent_config_json), "/sim_control/agent_config")
+        self.conn.send_messages_and_step(enable_physics_step=False)
+        self.conn.read_messages_from_unity()
+
+        # Random generaiton preparation
+        # Create objects necessary for generating a world seed using the metaseed on every reset
+        self.metaworldgen_config = metaworldgen_config
+        self.world_seed_generator = None
+        if self.metaworldgen_config is not None and "world_generation_metaseed" in self.metaworldgen_config:
+            seed_generation_seed = metaworldgen_config["world_generation_metaseed"]
+            self.world_seed_generator = np.random.default_rng(seed_generation_seed)
+
+        self.reset()
+        print("Did first reset to prepare environment and observation topics.")
 
         # -- Get observation topics ready by doing one step of communication
         self.conn.send_messages_and_step(enable_physics_step=False)
@@ -152,15 +173,7 @@ class WildfireGymEnv(gym.Env):# # #{
         # print dimensionality of observation space
         print("Observation space:", self.observation_space)
 
-        # Random generaiton preparation
-        # Create objects necessary for generating a world seed using the metaseed on every reset
-        self.metaworldgen_config = metaworldgen_config
-        self.world_seed_generator = None
-        if self.metaworldgen_config is not None and "world_generation_metaseed" in self.metaworldgen_config:
-            seed_generation_seed = metaworldgen_config["world_generation_metaseed"]
-            self.world_seed_generator = np.random.default_rng(seed_generation_seed)
 
-        self.num_episodes = 0
         self.reset_logging_metrics()
 # # #}
 
@@ -231,6 +244,7 @@ class WildfireGymEnv(gym.Env):# # #{
             print(self.largest_forward_velocity)
 
         self.reset_logging_metrics()
+        print("Reset complete, returning initial observation.")
 
 
         return obs, {}
@@ -242,6 +256,8 @@ class WildfireGymEnv(gym.Env):# # #{
 
         # --- Send action ---
         action_msg = self._build_action_msg(action)
+        print("Action message to send: forward " + str(action_msg.forward) + ", angular " + str(action_msg.radiansCounterClockwise))
+        print("Control mode: " + str(self.control_mode))
         if self.control_mode == "acceleration":
             self.conn.publish(action_msg, self.accel_twist_msg_out_topic)
         else:
@@ -503,7 +519,8 @@ class WildfireGymEnv(gym.Env):# # #{
         if not self.lidar_msg_in_topic in msgs.keys():
             print("Warning: lidar message not found in msgs.")
             print("Which topics are available:", list(msgs.keys()))
-            return np.zeros(self.observation_space["lidar"].shape, dtype=np.float32)
+            # return np.zeros(self.observation_space["lidar"].shape, dtype=np.float32)
+            return None
         lidar_msg = msgs[self.lidar_msg_in_topic][0]
 
         # Lidar has -1 for out of range, convert to max range
