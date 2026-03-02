@@ -60,7 +60,11 @@ class WildfireGymEnv(gym.Env):# # #{
                 print("Using curriculum's default task config: " + str(task_config))
 
         # --- Task tracker ---
-        self.task_tracker = TaskTracker(task_config if task_config else {})
+        if task_config is None:
+            print("ERROR! no config provided for task tracker, which is required. Please provide a task_config dict with necessary parameters for your task.")
+            assert task_config is not None
+        self.task_tracker = TaskTracker(task_config)
+        print("Initialized task tracker with config: " + str(task_config))
 
         # --- Set sensing params ---
         # TODO - implement if needed

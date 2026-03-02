@@ -39,8 +39,8 @@ metaworldgen_cfg = {
     "world_generation_metaseed": 1
 }
 
-task_config = {}
-# task_config = blend_presets("task", ["default"])  # or override specific keys:
+task_config = blend_presets("task", ["default"])  # or override specific keys:
+# task_config = {}
 # task_config = {
 #     "episode_max_steps": 500,
 #     "foraging_settings": {"reward_object_pickup_modifier": 20.0},
