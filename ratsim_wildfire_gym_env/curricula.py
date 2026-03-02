@@ -33,9 +33,21 @@ def get_named_envconfig(name):# # #{
     worldgen_config = {}
     sensor_config = {}
 
-    reward_config = {
-        "hard_collision_reward" : -100,
-        "reward_pickup_reward" : 20,
+    task_config = {
+        "foraging_settings": {
+            "reward_object_pickup_modifier": 20.0,
+        },
+        "collision_settings": {
+            "penalize_collisions": True,
+            "penalization_variable": "constant",
+            "collision_penalty_modifier": 100.0,
+            "min_col_velocity": 0.5,
+        },
+        "termination_settings": {
+            "terminate_on_collision": True,
+            "collision_termination_reward": 0.0,
+            "terminate_on_all_rewards_collected": True,
+        },
     }
 
     action_config = {
@@ -58,7 +70,7 @@ def get_named_envconfig(name):# # #{
             "rewardNumerosity" : 0.005,
             "rewardDistribution" : "everywhere",
         }
-        reward_config["max_steps"] = 1000
+        task_config["episode_max_steps"] = 1000
 
     elif name == "houses_only_easy_1":
         worldgen_config = {
@@ -75,13 +87,13 @@ def get_named_envconfig(name):# # #{
             "rewardNumerosity" : 1.0,
             "rewardDistribution" : "houses",
         }
-        reward_config["max_steps"] = 2000
+        task_config["episode_max_steps"] = 2000
 
         pass
     else:
         raise ValueError(f"Unknown curriculum name: {name}")
 
-    return worldgen_config, sensor_config, action_config, reward_config
+    return worldgen_config, sensor_config, action_config, task_config
 # # #}
 
 def build_curriculum(name):

@@ -14,6 +14,7 @@ from ratsim.roslike_unity_connector.message_definitions import (
 )
 from ratsim.config_blender import to_entries_json
 from ratsim.transforms import yaw_from_quat
+from ratsim.task_tracker import TaskTracker
 
 from ratsim_wildfire_gym_env.curricula import *
 
@@ -26,7 +27,7 @@ class WildfireGymEnv(gym.Env):# # #{
         agent_config: dict,
         sensor_config: dict,
         action_config: dict,
-        reward_config: dict,
+        task_config: dict,
         metaworldgen_config: dict,
         curriculum_name: str = "",
     ):
@@ -36,7 +37,6 @@ class WildfireGymEnv(gym.Env):# # #{
         self.agent_config = agent_config
         self.sensor_config = sensor_config
         self.action_config = action_config
-        self.reward_config = reward_config
         self.step_count = 0
 
         self.curriculum = None
@@ -46,18 +46,21 @@ class WildfireGymEnv(gym.Env):# # #{
             default_envconfig = self.curriculum.get_default_envconfig()
             default_sensor_config = default_envconfig[1]
             default_action_config = default_envconfig[2]
-            default_reward_config = default_envconfig[3]
+            default_task_config = default_envconfig[3]
 
-            # If sensor, action or reward configs are empty/null, fill them in from curriculum
+            # If sensor, action or task configs are empty/null, fill them in from curriculum
             if self.sensor_config is None or len(self.sensor_config) == 0:
                 self.sensor_config = default_sensor_config
                 print("Using curriculum's default sensor config: " + str(self.sensor_config))
             if self.action_config is None or len(self.action_config) == 0:
                 self.action_config = default_action_config
                 print("Using curriculum's default action config: " + str(self.action_config))
-            if self.reward_config is None or len(self.reward_config) == 0:
-                self.reward_config = default_reward_config
-                print("Using curriculum's default reward config: " + str(self.reward_config))
+            if task_config is None or len(task_config) == 0:
+                task_config = default_task_config
+                print("Using curriculum's default task config: " + str(task_config))
+
+        # --- Task tracker ---
+        self.task_tracker = TaskTracker(task_config if task_config else {})
 
         # --- Set sensing params ---
         # TODO - implement if needed
@@ -246,6 +249,7 @@ class WildfireGymEnv(gym.Env):# # #{
             print(self.largest_forward_velocity)
 
         self.reset_logging_metrics()
+        self.task_tracker.reset()
         print("Reset complete, returning initial observation.")
 
 
@@ -271,14 +275,15 @@ class WildfireGymEnv(gym.Env):# # #{
         self.conn.log_connection_stats()
 
         obs = self._parse_observation(msgs)
-        reward = self._compute_reward(msgs)
-        terminated = self._check_terminated(msgs)
-        max_steps = self.reward_config.get("max_steps", 200)
-        truncated = self.step_count >= max_steps
+        self.task_tracker.update_with_unity_msgs(msgs)
+        reward = self.task_tracker.get_this_step_score()
+        terminated = self.task_tracker.is_terminated()
+        truncated = self.step_count >= self.task_tracker.episode_max_steps
         if truncated:
-            print("Truncating episode due to max steps reached: " + str(max_steps))
+            print("Truncating episode due to max steps reached: " + str(self.task_tracker.episode_max_steps))
         if terminated:
-            print("Terminating episode at step " + str(self.step_count) + " with reward " + str(reward))
+            print("Terminating episode at step " + str(self.step_count) + " with reward " + str(reward)
+                  + " (reason: " + str(self.task_tracker.get_termination_reason()) + ")")
 
         # Log metrics for debugging
         self._parse_and_log_metrics(msgs)
@@ -357,16 +362,6 @@ class WildfireGymEnv(gym.Env):# # #{
         return msg
 # # #}
 
-    def _check_num_reward_objs_picked_up(self, msgs):# # #{
-        rew_topic = "/reward_pickup"
-        if not rew_topic in msgs.keys():
-            return 0
-        # its int msgs, each corresponds to some objects numerosity
-        rew_msgs = msgs[rew_topic]
-        total_picked_up = sum([msg.data for msg in rew_msgs])
-        return total_picked_up
-
-# # #}
 
     def _extract_relative_goal_vector(self, msgs):# # #{
         res = np.zeros(2, dtype=np.float32)
@@ -398,42 +393,6 @@ class WildfireGymEnv(gym.Env):# # #{
         return res
 # # #}
 
-    def _compute_reward(self, msgs):# # #{
-        # Give reward for getting closer to goal
-        goal_vector = self._extract_relative_goal_vector(msgs)
-        reward = 0.0
-        # goal_distance = np.linalg.norm(goal_vector)
-        # if goal_distance < self.best_goal_distance:
-        #     reward += 1 * (self.best_goal_distance - goal_distance)
-        #     # print(f"Reward for getting closer to goal: {reward:.3f}")
-        #     self.best_goal_distance = goal_distance
-
-        if self._get_collision_vel_if_collided(msgs) is not None:
-            reward += self.reward_config.get("hard_collision_reward", -100.0)
-            self.collision_count += 1
-            # print(f"Collision detected! Applying collision reward: {self.collision_reward}")
-            print("COLLISION VEL: " + str(self._get_collision_vel_if_collided(msgs)))
-
-        num_pickup_objects = self._check_num_reward_objs_picked_up(msgs)
-        pickupable_reward = num_pickup_objects * self.reward_config.get("reward_pickup_reward", 20.0)
-        self.num_reward_objs_picked_up += num_pickup_objects
-        reward += pickupable_reward
-
-        if(pickupable_reward > 0):
-            print(f"!!! - Reward for picking up objects: {pickupable_reward}")
-
-        return reward
-# # #}
-
-    def _check_terminated(self, msgs):# # #{
-
-        if self._get_collision_vel_if_collided(msgs) is not None:
-            self.collided_ended = True
-            print("Terminating episode due to collision.")
-            return True
-
-        return False
-# # #}
 
     # --- Logging helpers ---
 
@@ -442,8 +401,6 @@ class WildfireGymEnv(gym.Env):# # #{
         self.distance_traveled = 0.0
         self.longest_step_distance = 0.0
         self.largest_forward_velocity = 0.0
-        self.num_reward_objs_picked_up = 0.0
-        self.collision_count = 0
         # # #}
 
     def _parse_and_log_metrics(self, msgs):# # #{
@@ -466,7 +423,7 @@ class WildfireGymEnv(gym.Env):# # #{
     # # #}
 
     def get_reward_pickups(self):# # #{
-        return self.num_reward_objs_picked_up
+        return self.task_tracker.get_num_reward_objs_picked_up()
     # # #}
 
     def get_longest_step_distance(self):# # #{
@@ -511,14 +468,6 @@ class WildfireGymEnv(gym.Env):# # #{
 
 
         return resdict
-# # #}
-
-    def _get_collision_vel_if_collided(self, msgs):# # #{
-        collision_topic = "/collisions"
-        if not collision_topic in msgs.keys():
-            return None
-        collision_msg = msgs[collision_topic][0]
-        return collision_msg.data
 # # #}
 
     def _extract_lidar(self, msgs):# # #{

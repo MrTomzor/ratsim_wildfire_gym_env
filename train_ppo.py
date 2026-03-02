@@ -39,11 +39,12 @@ metaworldgen_cfg = {
     "world_generation_metaseed": 1
 }
 
-reward_config = {}
-# reward_config = {
-#     "hard_collision_reward" : -100,
-#     "reward_pickup_reward" : 20,
-#     "max_steps" : 500,
+task_config = {}
+# task_config = blend_presets("task", ["default"])  # or override specific keys:
+# task_config = {
+#     "episode_max_steps": 500,
+#     "foraging_settings": {"reward_object_pickup_modifier": 20.0},
+#     "termination_settings": {"terminate_on_collision": True},
 # }
 
 
@@ -54,7 +55,7 @@ def make_env():
         agent_config=agent_config,
         sensor_config=sensor_config,
         action_config=action_config,
-        reward_config=reward_config,
+        task_config=task_config,
         metaworldgen_config=metaworldgen_cfg,
         curriculum_name=curriculum_name,
     )

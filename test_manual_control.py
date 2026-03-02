@@ -43,12 +43,7 @@ metaworldgen_cfg = {
     "world_generation_metaseed": 666
 }
 
-reward_config = {}
-# reward_config = {
-#     "hard_collision_reward" : -100,
-#     "reward_pickup_reward" : 20,
-#     "max_steps" : 500,
-# }
+task_config = {}
 
 
 def make_env():
@@ -57,7 +52,7 @@ def make_env():
         worldgen_config=worldgen_config,
         sensor_config=sensor_config,
         action_config=action_config,
-        reward_config=reward_config,
+        task_config=task_config,
         metaworldgen_config=metaworldgen_cfg,
         curriculum_name=curriculum_name,
     )
