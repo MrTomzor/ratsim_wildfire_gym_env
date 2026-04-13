@@ -85,6 +85,7 @@ class WildfireGymEnv(gym.Env):# # #{
         self.gps_enabled = True
         self.gps_normalization_factor = 300.0 # divide gps readings by this factor to keep in reasonable range for NN
         self.compass_enabled = True
+        self.discrete_actions = True
 
         # --- Connect to Ratsim ---
         self.conn = RoslikeUnityConnector(verbose=False)
@@ -119,8 +120,11 @@ class WildfireGymEnv(gym.Env):# # #{
         lidar_msg = msgs[self.lidar_msg_in_topic][0]
         if lidar_msg is None:
             print("ERROR! no lidar message received during initialization. Check connection and topic names.")
-        num_lidar_rays = len(lidar_msg.ranges) 
+        num_lidar_rays = len(lidar_msg.ranges)
         num_lidar_semantics = len(lidar_msg.descriptors) if lidar_msg.descriptors is not None else 0
+        print("Number of lidar rays: " + str(num_lidar_rays) + ", number of semantic channels: " + str(num_lidar_semantics))
+        self.num_lidar_rays = num_lidar_rays
+        self.num_lidar_channels = (num_lidar_semantics // num_lidar_rays + 1) if self.lidar_observation_format == "depth_and_semantics" else 1
 
 
 
@@ -138,12 +142,17 @@ class WildfireGymEnv(gym.Env):# # #{
         print(f"Action config: max_forward_velocity={self.max_forward_velocity}, max_angular_velocity={self.max_angular_velocity}")
 
         # --- Action space ---
-        # Example: differential drive
-        self.action_space = spaces.Box(
-            low=np.array([-1.0, -1.0]),
-            high=np.array([1.0, 1.0]),
-            dtype=np.float32,
-        )
+        if self.discrete_actions:
+            # 3 linear (backward, stop, forward) x 5 angular (hard left .. hard right)
+            self._linear_bins = np.array([-1.0, 0.0, 1.0], dtype=np.float32)
+            self._angular_bins = np.array([-1.0, -0.5, 0.0, 0.5, 1.0], dtype=np.float32)
+            self.action_space = spaces.MultiDiscrete([len(self._linear_bins), len(self._angular_bins)])
+        else:
+            self.action_space = spaces.Box(
+                low=np.array([-1.0, -1.0]),
+                high=np.array([1.0, 1.0]),
+                dtype=np.float32,
+            )
 
         # --- Observation space ---
         # Example: lidar + goal vector
@@ -226,7 +235,7 @@ class WildfireGymEnv(gym.Env):# # #{
         if options is not None:
             cfg.update(options)
         config_json = to_entries_json(cfg)
-        print("Sending json worldgen config: " + config_json)
+        # print("Sending json worldgen config: " + config_json)
         self.conn.publish(StringMessage(data=config_json), "/sim_control/world_config")
         self.conn.publish(BoolMessage(data=True), "/sim_control/reset_episode")
         self.conn.send_messages_and_step(enable_physics_step=True)
@@ -252,6 +261,10 @@ class WildfireGymEnv(gym.Env):# # #{
             print(self.longest_step_distance)
             print(self.largest_forward_velocity)
 
+        # Store completed episode metrics before clearing
+        if hasattr(self, 'distance_traveled'):
+            self._finalize_episode_metrics()
+
         self.reset_logging_metrics()
         self.task_tracker.reset()
         print("Reset complete, returning initial observation.")
@@ -266,8 +279,8 @@ class WildfireGymEnv(gym.Env):# # #{
 
         # --- Send action ---
         action_msg = self._build_action_msg(action)
-        print("Action message to send: linear_x " + str(action_msg.linear_x) + ", angular_z " + str(action_msg.angular_z))
-        print("Control mode: " + str(self.control_mode))
+        # print("Action message to send: linear_x " + str(action_msg.linear_x) + ", angular_z " + str(action_msg.angular_z))
+        # print("Control mode: " + str(self.control_mode))
         if self.control_mode == "acceleration":
             self.conn.publish(action_msg, self.accel_twist_msg_out_topic)
         else:
@@ -276,7 +289,7 @@ class WildfireGymEnv(gym.Env):# # #{
         self.conn.send_messages_and_step(enable_physics_step=True)
         msgs = self.conn.read_messages_from_unity()
 
-        self.conn.log_connection_stats()
+        # self.conn.log_connection_stats()
 
         obs = self._parse_observation(msgs)
         self.task_tracker.update_with_unity_msgs(msgs)
@@ -341,28 +354,30 @@ class WildfireGymEnv(gym.Env):# # #{
 # # #}
 
     def _build_action_msg(self, action):# # #{
-        # Replace with your real message
         msg = TwistMessage()
-        if self.control_mode == "acceleration":
-            # Acceleration control
-            msg.linear_x = float(action[0]) * self.max_forward_acceleration
-            msg.linear_y = 0
-            msg.linear_z = 0
-            msg.angular_x = 0
-            msg.angular_y = 0
-            msg.angular_z = float(action[1]) * self.max_angular_acceleration
+
+        if self.discrete_actions:
+            linear_norm = float(self._linear_bins[action[0]])
+            angular_norm = float(self._angular_bins[action[1]])
         else:
-            # Velocity control
-            msg.linear_x = float(action[0]) * self.max_forward_velocity
-            msg.linear_x = 10 * np.sign(msg.linear_x) #debug
-            self.largest_forward_velocity = max(self.largest_forward_velocity , abs(msg.linear_x))
-            # print("forward velocity: " + str(msg.linear_x))
+            linear_norm = float(action[0])
+            angular_norm = float(action[1])
+
+        if self.control_mode == "acceleration":
+            msg.linear_x = linear_norm * self.max_forward_acceleration
             msg.linear_y = 0
             msg.linear_z = 0
             msg.angular_x = 0
             msg.angular_y = 0
-            msg.angular_z = float(action[1]) * self.max_angular_velocity
-            # msg.angular_z = 0 #debug
+            msg.angular_z = angular_norm * self.max_angular_acceleration
+        else:
+            msg.linear_x = linear_norm * self.max_forward_velocity
+            self.largest_forward_velocity = max(self.largest_forward_velocity, abs(msg.linear_x))
+            msg.linear_y = 0
+            msg.linear_z = 0
+            msg.angular_x = 0
+            msg.angular_y = 0
+            msg.angular_z = angular_norm * self.max_angular_velocity
         return msg
 # # #}
 
@@ -371,8 +386,8 @@ class WildfireGymEnv(gym.Env):# # #{
         res = np.zeros(2, dtype=np.float32)
 
         if not self.goal_pose_msg_in_topic in msgs.keys() or not self.agent_pose_msg_in_topic in msgs.keys():
-            print("Warning: goal or agent pose message not found in msgs.")
-            print("Which topics are available:", list(msgs.keys()))
+            # print("Warning: goal or agent pose message not found in msgs.")
+            # print("Which topics are available:", list(msgs.keys()))
             return res
 
         goal_msg = msgs[self.goal_pose_msg_in_topic][0]
@@ -405,6 +420,15 @@ class WildfireGymEnv(gym.Env):# # #{
         self.distance_traveled = 0.0
         self.longest_step_distance = 0.0
         self.largest_forward_velocity = 0.0
+        if not hasattr(self, '_completed_episode_distances'):
+            self._completed_episode_distances = []
+            self._completed_episode_pickups = []
+        # # #}
+
+    def _finalize_episode_metrics(self):# # #{
+        """Store completed episode metrics before reset clears them."""
+        self._completed_episode_distances.append(self.distance_traveled)
+        self._completed_episode_pickups.append(self.task_tracker.get_num_reward_objs_picked_up())
         # # #}
 
     def _parse_and_log_metrics(self, msgs):# # #{
@@ -428,6 +452,20 @@ class WildfireGymEnv(gym.Env):# # #{
 
     def get_reward_pickups(self):# # #{
         return self.task_tracker.get_num_reward_objs_picked_up()
+    # # #}
+
+    def get_completed_episode_distances(self):# # #{
+        """Return and clear the list of completed episode distances."""
+        result = list(self._completed_episode_distances)
+        self._completed_episode_distances.clear()
+        return result
+    # # #}
+
+    def get_completed_episode_pickups(self):# # #{
+        """Return and clear the list of completed episode pickups."""
+        result = list(self._completed_episode_pickups)
+        self._completed_episode_pickups.clear()
+        return result
     # # #}
 
     def get_longest_step_distance(self):# # #{

@@ -30,8 +30,8 @@ sensor_config = {
 }
 
 action_config = {
-    "control_mode": "acceleration",
-    # "control_mode": "velocity",
+    # "control_mode": "acceleration",
+    "control_mode": "velocity",
 }
 
 metaworldgen_cfg = {
@@ -123,18 +123,20 @@ class CustomMetricsCallback(BaseCallback):
         # log every N steps (match PPO rollout length usually)
         if self.n_calls % self.log_freq == 0:
 
-            # get values from all envs
-            distances = self.training_env.env_method("get_distance_traveled")
-            pickups = self.training_env.env_method("get_reward_pickups")
+            # Collect completed-episode metrics (drains the buffers)
+            all_distances = self.training_env.env_method("get_completed_episode_distances")
+            all_pickups = self.training_env.env_method("get_completed_episode_pickups")
             longest_step_distance = self.training_env.env_method("get_longest_step_distance")
 
-            # compute averages across vectorized envs
-            avg_distance = np.mean(distances)
-            avg_pickups = np.mean(pickups)
+            # Flatten lists from all vectorized envs
+            flat_distances = [d for env_list in all_distances for d in env_list]
+            flat_pickups = [p for env_list in all_pickups for p in env_list]
 
-            # log to tensorboard
-            self.logger.record("custom/avg_distance_traveled", avg_distance)
-            self.logger.record("custom/avg_reward_pickups", avg_pickups)
+            # log to tensorboard (only if we have completed episodes)
+            if flat_distances:
+                self.logger.record("custom/avg_distance_traveled", np.mean(flat_distances))
+            if flat_pickups:
+                self.logger.record("custom/avg_reward_pickups", np.mean(flat_pickups))
             self.logger.record("custom/longest_step_distance", np.max(longest_step_distance))
 
         return True
