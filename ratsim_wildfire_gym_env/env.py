@@ -1,3 +1,7 @@
+import json
+import time
+from pathlib import Path
+
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
@@ -13,6 +17,7 @@ from ratsim.roslike_unity_connector.message_definitions import (
     Lidar2DMessage,
 )
 from ratsim.config_blender import to_entries_json
+from ratsim.config_blender.blender import flatten_config
 from ratsim.transforms import yaw_from_quat
 from ratsim.task_tracker import TaskTracker
 
@@ -30,6 +35,8 @@ class WildfireGymEnv(gym.Env):# # #{
         task_config: dict,
         metaworldgen_config: dict,
         curriculum_name: str = "",
+        episode_log_path: "str | Path | None" = None,
+        run_metadata: "dict | None" = None,
     ):
         super().__init__()
 
@@ -38,6 +45,21 @@ class WildfireGymEnv(gym.Env):# # #{
         self.sensor_config = sensor_config
         self.action_config = action_config
         self.step_count = 0
+
+        # --- Per-episode JSONL logging ---
+        # Completed episodes are appended to `episode_log_path` on terminate/truncate
+        # with the schema used by test.py's make_episode_result(). `run_metadata`
+        # stamps method/rundef/seed/stage_idx into every line.
+        # `episode_idx` is made cumulative across stages by counting existing lines
+        # in the log file at construction time (each stage constructs a fresh env).
+        self.episode_log_path = Path(episode_log_path) if episode_log_path else None
+        self.run_metadata = dict(run_metadata) if run_metadata else {}
+        self.episode_log_counter = 0
+        self.episode_idx_offset = 0
+        if self.episode_log_path is not None and self.episode_log_path.exists():
+            with open(self.episode_log_path) as f:
+                self.episode_idx_offset = sum(1 for _ in f)
+        self.episode_start_time = time.time()
 
         self.curriculum = None
         if curriculum_name != "":
@@ -86,6 +108,21 @@ class WildfireGymEnv(gym.Env):# # #{
         self.gps_normalization_factor = 300.0 # divide gps readings by this factor to keep in reasonable range for NN
         self.compass_enabled = True
         self.discrete_actions = True
+
+        # --- Sector signal sensor (driven by agent_config) ---
+        # agent_config may be in structured form (sensors: [ {name: ..., ...}, ... ]);
+        # flatten to the same flat dict Unity receives so we can query by flat keys.
+        _flat_cfg = flatten_config(self.agent_config)
+        _sensors_list = [s.strip() for s in str(_flat_cfg.get("sensors", "")).split(",")]
+        print("SENSORS LIST:", _sensors_list)
+        self.sector_signal_enabled = "sector_signal" in _sensors_list
+        if self.sector_signal_enabled:
+            _ch_str = str(_flat_cfg.get("sector_signal/channels", "default"))
+            self.sector_signal_channels = [c.strip() for c in _ch_str.split(",") if c.strip()]
+            self.sector_signal_n_sectors = int(_flat_cfg.get("sector_signal/nSectors", 8))
+            _prefix = str(_flat_cfg.get("sector_signal/topicPrefix", "/sector_signal"))
+            self.sector_signal_topics = [f"{_prefix}/{c}" for c in self.sector_signal_channels]
+            print(f"Sector signal enabled: channels={self.sector_signal_channels}, n_sectors={self.sector_signal_n_sectors}")
 
         # --- Connect to Ratsim ---
         self.conn = RoslikeUnityConnector(verbose=False)
@@ -184,7 +221,11 @@ class WildfireGymEnv(gym.Env):# # #{
 
         if self.gps_enabled:
             # TODO - handle size correctly based on worldgen config (arena size)?
-            obsvdict["gps"] = spaces.Box(-1, 1, shape=(2,), dtype=np.float32) 
+            obsvdict["gps"] = spaces.Box(-1, 1, shape=(2,), dtype=np.float32)
+
+        if self.sector_signal_enabled:
+            _sig_total = len(self.sector_signal_channels) * self.sector_signal_n_sectors
+            obsvdict["sector_signal"] = spaces.Box(0.0, 1.0, shape=(_sig_total,), dtype=np.float32)
 
         self.observation_space = spaces.Dict(obsvdict)
 
@@ -267,6 +308,7 @@ class WildfireGymEnv(gym.Env):# # #{
 
         self.reset_logging_metrics()
         self.task_tracker.reset()
+        self.episode_start_time = time.time()
         print("Reset complete, returning initial observation.")
 
 
@@ -304,6 +346,9 @@ class WildfireGymEnv(gym.Env):# # #{
 
         # Log metrics for debugging
         self._parse_and_log_metrics(msgs)
+
+        if terminated or truncated:
+            self._log_episode_jsonl(terminated=terminated, truncated=truncated)
 
         return obs, reward, terminated, truncated, {}
 # # #}
@@ -472,6 +517,38 @@ class WildfireGymEnv(gym.Env):# # #{
         return self.longest_step_distance
     # # #}
 
+    def get_num_episodes(self):# # #{
+        """Total completed episodes written to JSONL in this env instance."""
+        return self.episode_log_counter
+    # # #}
+
+    def _log_episode_jsonl(self, terminated: bool, truncated: bool):# # #{
+        """Append one JSON line per completed episode, matching test.py's schema."""
+        if self.episode_log_path is None:
+            return
+        self.episode_log_counter += 1
+        reason = self.task_tracker.get_termination_reason()
+        if reason is None:
+            reason = "max_steps" if truncated else "unknown"
+        record = {
+            "method": self.run_metadata.get("method"),
+            "rundef": self.run_metadata.get("rundef"),
+            "stage_idx": self.run_metadata.get("stage_idx"),
+            "seed": self.run_metadata.get("seed"),
+            "episode_idx": self.episode_idx_offset + self.episode_log_counter,
+            "steps": self.step_count,
+            "total_score": self.task_tracker.get_total_score(),
+            "objects_found": self.task_tracker.get_num_reward_objs_picked_up(),
+            "collisions": self.task_tracker.get_collision_count(),
+            "termination_reason": reason,
+            "distance_traveled": float(self.distance_traveled),
+            "wall_time_s": time.time() - self.episode_start_time,
+        }
+        self.episode_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.episode_log_path, "a") as f:
+            f.write(json.dumps(record) + "\n")
+    # # #}
+
     # --- Sensor helpers ---
     def _parse_observation(self, msgs):# # #{
         # This is where your sensor parsing lives
@@ -508,6 +585,8 @@ class WildfireGymEnv(gym.Env):# # #{
             gps = self._extract_gps(msgs)
             resdict["gps"] = gps
 
+        if self.sector_signal_enabled:
+            resdict["sector_signal"] = self._extract_sector_signal(msgs)
 
         return resdict
 # # #}
@@ -571,4 +650,22 @@ class WildfireGymEnv(gym.Env):# # #{
 
     def _extract_goal(self, msgs):# # #{
         return np.zeros(2, dtype=np.float32)# # #}
+
+    def _extract_sector_signal(self, msgs):# # #{
+        # Flattens [channel0_sec0, channel0_sec1, ..., channel1_sec0, ...] in the same
+        # channel order as self.sector_signal_channels. Missing topics -> zeros.
+        n_ch = len(self.sector_signal_channels)
+        n_s = self.sector_signal_n_sectors
+        out = np.zeros(n_ch * n_s, dtype=np.float32)
+        for ci, topic in enumerate(self.sector_signal_topics):
+            if topic not in msgs:
+                continue
+            msg = msgs[topic][0]
+            if msg is None or msg.data is None:
+                continue
+            arr = np.asarray(msg.data, dtype=np.float32)
+            k = min(n_s, len(arr))
+            out[ci * n_s : ci * n_s + k] = arr[:k]
+        return out
+    # # #}
 
