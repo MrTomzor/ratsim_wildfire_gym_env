@@ -38,12 +38,20 @@ No test suite exists; testing is done via the `test_*.py` evaluation/interaction
 
 `WildfireGymEnv(gym.Env)` — the main class. Implements standard Gymnasium API (`reset()`, `step()`, `close()`).
 
-**Configuration**: Five config dicts control behavior:
+**Configuration**: config dicts control behavior:
 - `worldgen_config`: Arena size, tree density, house count, reward distribution — sent to Unity each `reset()`
 - `agent_config`: Agent prefab, sensors, actuators — loaded via `blend_presets("agents", ...)`, sent to Unity once during `__init__()` on `/sim_control/agent_config`
 - `sensor_config`: Lidar parameters (ray count, range, semantics)
 - `action_config`: Control mode (`"velocity"` or `"acceleration"`)
-- `reward_config`: Reward values, max steps per episode
+- `task_config`: Passed to `TaskTracker` (episode_max_steps, foraging_settings, collision_settings, termination_settings, optional volumetric_exploration_settings). Replaces the old `reward_config`.
+
+**Volumetric exploration reward**: when `task_config` has a `volumetric_exploration_settings` block, TaskTracker builds a 2D occupancy grid from ground-truth pose + lidar scans and rewards newly-known cell area × `reward_per_m2` each step. Uses the agent's `/<name_prefix>/gt_pose` topic (Unity force-enables `AbsolutePose2DSensor` for this — it's infrastructure, not an observation). Keys: `reward_per_m2`, `grid_resolution`, `visualize`, `debug`, `debug_every`. Example preset: `task_presets/volumetric_exploration_1000_collision_penalty.yaml`.
+
+**Optional logging kwargs** on `WildfireGymEnv.__init__`:
+- `episode_log_path`: Path to a JSONL file. If set, the env appends one JSON line per completed episode (on `terminated` or `truncated`) via `_log_episode_jsonl()`. Training scripts point this at `results/<run>/train_episodes.jsonl`.
+- `run_metadata`: Dict merged into every line (e.g., `{"method": "ppo", "rundef": "...", "seed": 1, "stage_idx": 0}`). Kept per-line deliberately so each JSONL is self-describing for downstream tools.
+
+`episode_idx` is **cumulative across stages**: on construction, the env counts existing lines in `episode_log_path` and uses that as its offset, so restarting the env for a new stage in the same run dir continues the numbering. `get_num_episodes()` returns the in-memory counter.
 
 **Observation space** (Dict):
 - `lidar`: Normalized depth (+ optional semantic descriptors), range 0–1
@@ -71,7 +79,8 @@ Uses SB3's `PPO` or `RecurrentPPO`. Custom `CustomMetricsCallback` logs distance
 
 ## Key Patterns
 
-- Episode terminates on collision (terminated=True) or after max_steps (truncated=True)
+- Termination is driven by `TaskTracker` (collision / zero_health / zero_battery / all_rewards_collected → `terminated=True`); `truncated=True` on reaching `episode_max_steps`
+- On episode end, if `episode_log_path` is set, one JSONL line is appended with the `run_metadata` plus TaskTracker's metrics (`total_score`, `objects_found`, `collisions`, `termination_reason`, `distance_traveled`, `steps`, `wall_time_s`, `episode_idx`)
 - Agent config is sent once during `__init__()` via `/sim_control/agent_config` (Unity's `AgentLoader` spawns the agent each episode based on this)
 - World generation happens in `reset()` via publishing world config JSON to `/sim_control/world_config` then triggering `/sim_control/reset_episode`
 - `metaworldgen_config` controls deterministic seed generation for reproducible procedural environments

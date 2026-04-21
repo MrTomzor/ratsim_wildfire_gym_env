@@ -81,18 +81,35 @@ class WildfireGymEnv(gym.Env):# # #{
                 task_config = default_task_config
                 print("Using curriculum's default task config: " + str(task_config))
 
-        # --- Task tracker ---
-        if task_config is None:
-            print("ERROR! no config provided for task tracker, which is required. Please provide a task_config dict with necessary parameters for your task.")
-            assert task_config is not None
-        self.task_tracker = TaskTracker(task_config)
-        print("Initialized task tracker with config: " + str(task_config))
-
         # --- Set sensing params ---
         # TODO - implement if needed
         self.lidar_msg_in_topic = "/lidar2d"
         self.goal_pose_msg_in_topic = "/wildfire_goal_position"
         self.agent_pose_msg_in_topic = "/rat1_pose"
+        # Ground-truth pose topic — always-on AbsolutePose2DSensor published by
+        # AgentLoader under the agent's name_prefix. Used for reward computation
+        # / debugging only (e.g. volumetric exploration); not part of RL obs.
+        _flat_agent = flatten_config(self.agent_config)
+        _agent_name_prefix = _flat_agent.get("name_prefix", "rat1")
+        self.agent_gt_pose_msg_in_topic = f"/{_agent_name_prefix}/gt_pose"
+
+        # --- Task tracker ---
+        if task_config is None:
+            print("ERROR! no config provided for task tracker, which is required. Please provide a task_config dict with necessary parameters for your task.")
+            assert task_config is not None
+        # Forward world bounds so the tracker can align a volumetric
+        # exploration grid with the maze center.
+        _flat_worldgen = flatten_config(self.worldgen_config)
+        world_w = _flat_worldgen.get("world_bounds/width", None)
+        world_h = _flat_worldgen.get("world_bounds/height", None)
+        self.task_tracker = TaskTracker(
+            task_config,
+            world_width=float(world_w) if world_w is not None else None,
+            world_height=float(world_h) if world_h is not None else None,
+            pose_topic=self.agent_gt_pose_msg_in_topic,
+            lidar_topic=self.lidar_msg_in_topic,
+        )
+        print("Initialized task tracker with config: " + str(task_config))
 
         # TODO - metaparams 
         self.num_episodes = 0
@@ -348,6 +365,7 @@ class WildfireGymEnv(gym.Env):# # #{
         self._parse_and_log_metrics(msgs)
 
         if terminated or truncated:
+            self.task_tracker.print_exploration_summary(prefix="end-of-episode")
             self._log_episode_jsonl(terminated=terminated, truncated=truncated)
 
         return obs, reward, terminated, truncated, {}
@@ -542,6 +560,7 @@ class WildfireGymEnv(gym.Env):# # #{
             "collisions": self.task_tracker.get_collision_count(),
             "termination_reason": reason,
             "distance_traveled": float(self.distance_traveled),
+            "explored_area_m2": float(self.task_tracker.get_explored_area_m2()),
             "wall_time_s": time.time() - self.episode_start_time,
         }
         self.episode_log_path.parent.mkdir(parents=True, exist_ok=True)
