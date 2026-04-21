@@ -486,12 +486,14 @@ class WildfireGymEnv(gym.Env):# # #{
         if not hasattr(self, '_completed_episode_distances'):
             self._completed_episode_distances = []
             self._completed_episode_pickups = []
+            self._completed_episode_explored_area = []
         # # #}
 
     def _finalize_episode_metrics(self):# # #{
         """Store completed episode metrics before reset clears them."""
         self._completed_episode_distances.append(self.distance_traveled)
         self._completed_episode_pickups.append(self.task_tracker.get_num_reward_objs_picked_up())
+        self._completed_episode_explored_area.append(float(self.task_tracker.get_explored_area_m2()))
         # # #}
 
     def _parse_and_log_metrics(self, msgs):# # #{
@@ -528,6 +530,13 @@ class WildfireGymEnv(gym.Env):# # #{
         """Return and clear the list of completed episode pickups."""
         result = list(self._completed_episode_pickups)
         self._completed_episode_pickups.clear()
+        return result
+    # # #}
+
+    def get_completed_episode_explored_area(self):# # #{
+        """Return and clear the list of completed episode explored areas (m²)."""
+        result = list(self._completed_episode_explored_area)
+        self._completed_episode_explored_area.clear()
         return result
     # # #}
 
