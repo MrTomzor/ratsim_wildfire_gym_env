@@ -37,8 +37,13 @@ class WildfireGymEnv(gym.Env):# # #{
         curriculum_name: str = "",
         episode_log_path: "str | Path | None" = None,
         run_metadata: "dict | None" = None,
+        unity_port: int = 9000,
     ):
         super().__init__()
+        # unity_port: TCP port the connector should attach to. Default 9000 for
+        # backwards compat with single-instance setups. Multi-env training passes
+        # a unique port per env (see ratsim.unity_launcher.allocate_unity_instances).
+        self.unity_port = unity_port
 
         self.worldgen_config = worldgen_config
         self.agent_config = agent_config
@@ -142,7 +147,7 @@ class WildfireGymEnv(gym.Env):# # #{
             print(f"Sector signal enabled: channels={self.sector_signal_channels}, n_sectors={self.sector_signal_n_sectors}")
 
         # --- Connect to Ratsim ---
-        self.conn = RoslikeUnityConnector(verbose=False)
+        self.conn = RoslikeUnityConnector(port=self.unity_port, verbose=False)
         self.conn.connect()
 
         # --- Select scene ---

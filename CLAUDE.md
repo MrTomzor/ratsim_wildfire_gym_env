@@ -51,6 +51,9 @@ No test suite exists; testing is done via the `test_*.py` evaluation/interaction
 - `episode_log_path`: Path to a JSONL file. If set, the env appends one JSON line per completed episode (on `terminated` or `truncated`) via `_log_episode_jsonl()`. Training scripts point this at `results/<run>/train_episodes.jsonl`.
 - `run_metadata`: Dict merged into every line (e.g., `{"method": "ppo", "rundef": "...", "seed": 1, "stage_idx": 0}`). Kept per-line deliberately so each JSONL is self-describing for downstream tools.
 
+**Multi-instance / vectorized training kwarg**:
+- `unity_port`: TCP port the connector attaches to (default 9000). For vectorized training, allocate ports via `ratsim.unity_launcher.allocate_unity_instances(n_envs)` and pass each env factory its own port. The `unity_launcher` handles two tiers: with `RATSIM_UNITY_BIN` set, it auto-spawns Unity instances on the 9100+ range for `n_envs>1`; without the env var, only `n_envs=1` works (reuses the manually-launched Unity on port 9000). See `ratsim/CLAUDE.md` for the full launcher contract.
+
 `episode_idx` is **cumulative across stages**: on construction, the env counts existing lines in `episode_log_path` and uses that as its offset, so restarting the env for a new stage in the same run dir continues the numbering. `get_num_episodes()` returns the in-memory counter.
 
 **Observation space** (Dict):
