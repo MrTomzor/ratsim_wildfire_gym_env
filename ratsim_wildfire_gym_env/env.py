@@ -238,6 +238,12 @@ class WildfireGymEnv(gym.Env):# # #{
             print("Warning: unknown goal observation format, defaulting to normalized_deltavec")
             return 1
 
+        # Get gps enabled and compass enabled from agent config
+        # for gps - agent should have either relative_pose or odom in the list of sensors
+        self.gps_enabled = any(s in _sensors_list for s in ["relative_pose", "odom"])
+        self.compass_enabled = "compass" in _sensors_list
+        print("GPS enabled: " + str(self.gps_enabled) + ", Compass enabled: " + str(self.compass_enabled))
+
         if self.compass_enabled:
             obsvdict["compass"] = spaces.Box(-1, 1, shape=(1,), dtype=np.float32)
 
@@ -303,12 +309,15 @@ class WildfireGymEnv(gym.Env):# # #{
         self.conn.publish(BoolMessage(data=True), "/sim_control/reset_episode")
         self.conn.send_messages_and_step(enable_physics_step=True)
         obs_msgs = self.conn.read_messages_from_unity()
+        # Surface worldgen errors/warnings posted during the reset step.
+        self.conn.process_worldgen_status()
 
         # Perform one more step to let worldgen happen
         self.conn.send_messages_and_step(enable_physics_step=True)
 
         # --- Read initial observations ---
         obs_msgs = self.conn.read_messages_from_unity()
+        self.conn.process_worldgen_status()
         obs = self._parse_observation(obs_msgs)
 
         # -- Reset goal nearing tracking ---
