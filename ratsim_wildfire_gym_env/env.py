@@ -22,6 +22,7 @@ from ratsim.transforms import yaw_from_quat
 from ratsim.task_tracker import TaskTracker
 
 from ratsim_wildfire_gym_env.curricula import *
+from ratsim_wildfire_gym_env.grid_cell_encoder import GridCellEncoder
 
 class WildfireGymEnv(gym.Env):# # #{
     metadata = {"render_modes": []}
@@ -127,9 +128,33 @@ class WildfireGymEnv(gym.Env):# # #{
         self.lidar_enabled = True
         # TODO - handle gps normalization factor based on worldgen config (arena size)?
         self.gps_enabled = True
-        self.gps_normalization_factor = 300.0 # divide gps readings by this factor to keep in reasonable range for NN
+        # self.gps_normalization_factor = 300.0 # divide gps readings by this factor to keep in reasonable range for NN
+        self.gps_normalization_factor = 1
         self.compass_enabled = True
         self.discrete_actions = True
+
+        # --- Grid-cell encoding of GPS ---
+        # When True, the "gps" observation becomes a vector of grid-cell
+        # activations instead of the raw 2D position. Toggle is set here at
+        # env construction; later it can be plumbed through agent_config.
+        self.use_grid_cells = True
+        self.grid_cell_num_cells = 8
+        self.grid_cell_min_scale = 2.0
+        self.grid_cell_max_scale = 100.0
+        self.grid_cell_seed = 0
+        self.grid_cell_verbose = False
+        self.grid_cell_encoder = None
+        if self.use_grid_cells:
+            self.grid_cell_encoder = GridCellEncoder(
+                num_cells=self.grid_cell_num_cells,
+                min_scale=self.grid_cell_min_scale,
+                max_scale=self.grid_cell_max_scale,
+                seed=self.grid_cell_seed,
+            )
+            print(
+                f"Grid-cell encoding enabled: num_cells={self.grid_cell_num_cells}, "
+                f"min_scale={self.grid_cell_min_scale}, max_scale={self.grid_cell_max_scale}"
+            )
 
         # --- Sector signal sensor (driven by agent_config) ---
         # agent_config may be in structured form (sensors: [ {name: ..., ...}, ... ]);
@@ -248,8 +273,13 @@ class WildfireGymEnv(gym.Env):# # #{
             obsvdict["compass"] = spaces.Box(-1, 1, shape=(1,), dtype=np.float32)
 
         if self.gps_enabled:
-            # TODO - handle size correctly based on worldgen config (arena size)?
-            obsvdict["gps"] = spaces.Box(-1, 1, shape=(2,), dtype=np.float32)
+            if self.use_grid_cells:
+                obsvdict["gps"] = spaces.Box(
+                    0.0, 1.0, shape=(self.grid_cell_num_cells,), dtype=np.float32
+                )
+            else:
+                # TODO - handle size correctly based on worldgen config (arena size)?
+                obsvdict["gps"] = spaces.Box(-1, 1, shape=(2,), dtype=np.float32)
 
         if self.sector_signal_enabled:
             _sig_total = len(self.sector_signal_channels) * self.sector_signal_n_sectors
@@ -661,17 +691,33 @@ class WildfireGymEnv(gym.Env):# # #{
 
     def _extract_gps(self, msgs):# # #{
         pose_relative_to_start_topic = "/rat1_pose_from_start"
-        res = np.zeros(2, dtype=np.float32)
+        if self.use_grid_cells:
+            zero_out = np.zeros(self.grid_cell_num_cells, dtype=np.float32)
+        else:
+            zero_out = np.zeros(2, dtype=np.float32)
         if not pose_relative_to_start_topic in msgs.keys():
             print("Warning: GPS message not found in msgs.")
             print("Which topics are available:", list(msgs.keys()))
-            return res
+            return zero_out
         pose_msg = msgs[pose_relative_to_start_topic][0]
+
+        if self.use_grid_cells:
+            # Encode raw (un-normalized) position so grid-cell scales are
+            # interpreted in arena meters.
+            activations = self.grid_cell_encoder.encode(pose_msg.x, pose_msg.y)
+            if self.grid_cell_verbose:
+                with np.printoptions(precision=3, suppress=True, linewidth=200):
+                    print(
+                        f"Grid-cell activations @ ({pose_msg.x:.2f}, {pose_msg.y:.2f}): "
+                        f"{activations}"
+                    )
+            return activations
+
+        res = np.zeros(2, dtype=np.float32)
         res[0] = pose_msg.x / self.gps_normalization_factor
         res[1] = pose_msg.y / self.gps_normalization_factor
         if np.abs(res[0]) > 1.0 or np.abs(res[1]) > 1.0:
             print("Warning: GPS reading exceeds normalization bounds, consider increasing normalization factor.")
-        # print("GPS reading (normalized): " + str(res))
         return res# # #}
 
     def _extract_compass(self, msgs):# # #{
