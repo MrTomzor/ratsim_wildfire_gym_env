@@ -128,8 +128,8 @@ class WildfireGymEnv(gym.Env):# # #{
         self.lidar_enabled = True
         # TODO - handle gps normalization factor based on worldgen config (arena size)?
         self.gps_enabled = True
-        # self.gps_normalization_factor = 300.0 # divide gps readings by this factor to keep in reasonable range for NN
-        self.gps_normalization_factor = 1
+        self.gps_normalization_factor = 300.0 # divide gps readings by this factor to keep in reasonable range for NN
+        # self.gps_normalization_factor = 1
         self.compass_enabled = True
         self.discrete_actions = True
 
@@ -137,7 +137,7 @@ class WildfireGymEnv(gym.Env):# # #{
         # When True, the "gps" observation becomes a vector of grid-cell
         # activations instead of the raw 2D position. Toggle is set here at
         # env construction; later it can be plumbed through agent_config.
-        self.use_grid_cells = True
+        self.use_grid_cells = False
         self.grid_cell_num_cells = 8
         self.grid_cell_min_scale = 2.0
         self.grid_cell_max_scale = 100.0
