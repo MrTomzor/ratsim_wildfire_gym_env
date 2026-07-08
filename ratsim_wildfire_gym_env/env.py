@@ -62,6 +62,9 @@ class WildfireGymEnv(gym.Env):# # #{
         self.run_metadata = dict(run_metadata) if run_metadata else {}
         self.episode_log_counter = 0
         self.episode_idx_offset = 0
+        # Extra key/values merged into each episode's JSONL record. Wrappers may
+        # write here (e.g. AdaptiveDifficultyWrapper records 'difficulty').
+        self.extra_log_fields: dict = {}
         if self.episode_log_path is not None and self.episode_log_path.exists():
             with open(self.episode_log_path) as f:
                 self.episode_idx_offset = sum(1 for _ in f)
@@ -408,11 +411,16 @@ class WildfireGymEnv(gym.Env):# # #{
         # Log metrics for debugging
         self._parse_and_log_metrics(msgs)
 
+        info = {}
         if terminated or truncated:
             self.task_tracker.print_exploration_summary(prefix="end-of-episode")
             self._log_episode_jsonl(terminated=terminated, truncated=truncated)
+            # Surface end-of-episode stats for wrappers (e.g. adaptive difficulty
+            # reads episode_pickups to decide success/failure).
+            info["episode_pickups"] = self.task_tracker.get_num_reward_objs_picked_up()
+            info["termination_reason"] = self.task_tracker.get_termination_reason()
 
-        return obs, reward, terminated, truncated, {}
+        return obs, reward, terminated, truncated, info
 # # #}
 
     def close(self):# # #{
@@ -615,6 +623,7 @@ class WildfireGymEnv(gym.Env):# # #{
             "distance_traveled": float(self.distance_traveled),
             "explored_area_m2": float(self.task_tracker.get_explored_area_m2()),
             "wall_time_s": time.time() - self.episode_start_time,
+            **self.extra_log_fields,
         }
         self.episode_log_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.episode_log_path, "a") as f:
