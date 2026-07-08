@@ -27,7 +27,36 @@ fine for the usual n_envs=1 setup here.
 """
 from __future__ import annotations
 
+import json
+
 import gymnasium as gym
+
+
+def last_logged_difficulty(jsonl_path) -> "float | None":
+    """Last recorded 'difficulty' in a train_episodes.jsonl, or None.
+
+    Used to make the difficulty walk persist across scheduler stages: each
+    stage (and each crash-resume) runs in a fresh process with a fresh
+    wrapper, so the trainer seeds d0 from the run's cumulative episode log
+    instead of restarting at the def's d0. Tolerates missing files, partial
+    trailing lines, and records without the field (non-adaptive stages).
+    """
+    last = None
+    try:
+        with open(jsonl_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get("difficulty") is not None:
+                    last = float(rec["difficulty"])
+    except OSError:
+        return None
+    return last
 
 
 def interpolate_ranges(ranges: dict, d: float) -> dict:
