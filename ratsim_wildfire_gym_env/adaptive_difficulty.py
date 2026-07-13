@@ -21,13 +21,20 @@ Coupled integer keys (e.g. maze/n_rooms and maze/rooms/reward_room/min =
 n_rooms - 2) stay consistent under rounding as long as their from/to values
 differ by an exact integer offset (same span -> same fractional part at every d).
 
-NOTE: each wrapped env instance carries its own difficulty state. With
-SubprocVecEnv and n_envs > 1 the difficulties evolve independently per env;
-fine for the usual n_envs=1 setup here.
+Difficulty state: by default each wrapped env instance carries its own
+difficulty (with n_envs > 1 that means K independent walks, one per env).
+Pass ``state_path`` to share ONE walk across all envs of a run instead: the
+value lives in a tiny text file, is re-read (under flock) at every reset and
+bumped with a locked read-modify-write on every episode end from ANY env —
+works both in-process (dreamer driver) and across SubprocVecEnv worker
+processes. The file persists across stages and crashes, so it also subsumes
+the jsonl-based resume: an existing file wins over d0.
 """
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 
 import gymnasium as gym
 
@@ -93,23 +100,72 @@ class AdaptiveDifficultyWrapper(gym.Wrapper):
     reset, so the next episode is generated at the new difficulty. The current
     d is exposed in every step's info as ``info["difficulty"]`` and recorded
     into the per-episode JSONL via the env's extra_log_fields.
+
+    With ``state_path`` set, d is SHARED across all envs of the run: the value
+    lives in that file, is re-read (under flock) at each reset and bumped with
+    a locked read-modify-write on each episode end — one walk fed by every
+    env, valid both in-process and across SubprocVecEnv workers. An existing
+    file wins over ``d0`` (automatic stage/crash resume). Without
+    ``state_path`` each wrapper keeps its own independent walk.
     """
 
     def __init__(self, env: gym.Env, ranges: dict, success_pickups: int = 4,
-                 step_up: float = 0.01, step_down: float = 0.01, d0: float = 0.0):
+                 step_up: float = 0.01, step_down: float = 0.01, d0: float = 0.0,
+                 state_path=None):
         super().__init__(env)
         self.ranges = dict(ranges)
         self.success_pickups = int(success_pickups)
         self.step_up = float(step_up)
         self.step_down = float(step_down)
         self.difficulty = min(1.0, max(0.0, float(d0)))
+        # Optional shared walk: one difficulty value for all envs of a run,
+        # stored in a file and updated under flock (safe across processes).
+        self.state_path = str(state_path) if state_path is not None else None
+        if self.state_path is not None:
+            self._init_state_file(self.difficulty)
+            # Adopt the shared value — an existing file wins over d0.
+            self.difficulty = self._shared_rmw(lambda d: d)
         # Snapshot the pristine base config once; every reset recomputes
         # base | overrides so overrides never accumulate or leak.
         self._base_worldgen = dict(self.env.unwrapped.worldgen_config)
         # Fail fast on a malformed spec (don't wait for the first reset).
         interpolate_ranges(self.ranges, self.difficulty)
 
+    def _init_state_file(self, d0: float) -> None:
+        """Create the shared state file with d0 iff it doesn't exist yet.
+
+        O_EXCL makes creation atomic: exactly one env wins the race, the
+        rest adopt the existing value.
+        """
+        try:
+            fd = os.open(self.state_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            return
+        with os.fdopen(fd, "w") as f:
+            f.write(f"{d0:.6f}")
+
+    def _shared_rmw(self, fn) -> float:
+        """flock'd read-modify-write on the shared value; returns the result.
+
+        fn(current) -> new; the result is clamped to [0, 1] and written back.
+        A corrupt/partial file falls back to this wrapper's last known value.
+        """
+        with open(self.state_path, "r+") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                d = float(f.read().strip())
+            except ValueError:
+                d = self.difficulty
+            d = min(1.0, max(0.0, fn(d)))
+            f.seek(0)
+            f.truncate()
+            f.write(f"{d:.6f}")
+        return d
+
     def reset(self, **kwargs):
+        if self.state_path is not None:
+            # Pick up bumps made by other envs since our last episode.
+            self.difficulty = self._shared_rmw(lambda d: d)
         overrides = interpolate_ranges(self.ranges, self.difficulty)
         inner = self.env.unwrapped
         inner.worldgen_config = {**self._base_worldgen, **overrides}
@@ -127,8 +183,13 @@ class AdaptiveDifficultyWrapper(gym.Wrapper):
                       "'episode_pickups'; difficulty not updated this episode")
             else:
                 success = pickups >= self.success_pickups
-                self.difficulty += self.step_up if success else -self.step_down
-                self.difficulty = min(1.0, max(0.0, self.difficulty))
+                delta = self.step_up if success else -self.step_down
+                if self.state_path is not None:
+                    # Bump the SHARED value (which other envs may have moved
+                    # since this episode started), not our local copy.
+                    self.difficulty = self._shared_rmw(lambda d: d + delta)
+                else:
+                    self.difficulty = min(1.0, max(0.0, self.difficulty + delta))
                 info["difficulty_success"] = success
                 print(f"[adaptive_difficulty] episode pickups={pickups} "
                       f"({'success' if success else 'failure'}) -> d={self.difficulty:.3f}")

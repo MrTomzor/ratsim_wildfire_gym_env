@@ -614,6 +614,7 @@ class WildfireGymEnv(gym.Env):# # #{
             "rundef": self.run_metadata.get("rundef"),
             "stage_idx": self.run_metadata.get("stage_idx"),
             "seed": self.run_metadata.get("seed"),
+            "env_idx": self.run_metadata.get("env_idx"),
             "episode_idx": self.episode_idx_offset + self.episode_log_counter,
             "steps": self.step_count,
             "total_score": self.task_tracker.get_total_score(),
