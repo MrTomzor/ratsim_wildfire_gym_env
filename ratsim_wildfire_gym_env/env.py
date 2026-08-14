@@ -205,6 +205,7 @@ class WildfireGymEnv(gym.Env):# # #{
         self.gps_enabled = True
         self.compass_enabled = True
         self._warned_compass_missing = False
+        self._gps_clip_count = 0
         self.discrete_actions = True
 
         # --- GPS scaling (driven by the `odom` entry in the agent preset) ---
@@ -802,13 +803,36 @@ class WildfireGymEnv(gym.Env):# # #{
                         f"Grid-cell activations @ ({pose_msg.x:.2f}, {pose_msg.y:.2f}): "
                         f"{activations}"
                     )
-            return activations
+            return np.clip(activations, 0.0, 1.0)
 
         res = np.zeros(2, dtype=np.float32)
         res[0] = pose_msg.x / self.gps_normalization_factor
         res[1] = pose_msg.y / self.gps_normalization_factor
+
+        # Saturate rather than let the observation leave its declared Box.
+        # dreamer's embodied CheckSpaces raises on the smallest overshoot
+        # (-1.0004 was enough to kill every compare_fullsar seed at ~40k steps),
+        # and SB3 silently trains on the out-of-range value instead — both worse
+        # than a clamped position. An agent this far out is off the map anyway,
+        # so the clipped value loses nothing the policy could have used.
         if np.abs(res[0]) > 1.0 or np.abs(res[1]) > 1.0:
-            print("Warning: GPS reading exceeds normalization bounds, consider increasing normalization factor.")
+            self._gps_clip_count += 1
+            if self._gps_clip_count == 1:
+                # On `automatic` the factor already covers the arena, so an
+                # overshoot means the agent left it — a world problem, not a
+                # scaling one.
+                fix = ("the agent is outside the world bounds; use a bounded "
+                       "world_bounds/boundary_type"
+                       if self.gps_normalization_mode == "automatic"
+                       else "raise relative_pose/rl_scaling_factor or set "
+                            "rl_scaling_mode: automatic")
+                print(f"Warning: GPS reading out of range at "
+                      f"({pose_msg.x:.1f}, {pose_msg.y:.1f}) m with "
+                      f"normalization factor {self.gps_normalization_factor} "
+                      f"(mode={self.gps_normalization_mode}) — clipping to "
+                      f"[-1, 1]. To fix, {fix}. "
+                      f"Further occurrences are silent; see _gps_clip_count.")
+            res = np.clip(res, -1.0, 1.0)
         return res# # #}
 
     def _extract_compass(self, msgs):# # #{
