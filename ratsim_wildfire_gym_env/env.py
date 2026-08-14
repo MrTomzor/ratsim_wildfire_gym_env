@@ -30,9 +30,9 @@ from ratsim_wildfire_gym_env.grid_cell_encoder import GridCellEncoder
 # "field not found" for them — that warning should keep meaning "you typo'd a
 # real Unity sensor param".
 PYTHON_ONLY_SENSOR_PARAMS = {
-    "odom/rl_scaling_mode",
-    "odom/rl_scaling_factor",
-    "odom/use_grid_cells",
+    "relative_pose/rl_scaling_mode",
+    "relative_pose/rl_scaling_factor",
+    "relative_pose/use_grid_cells",
 }
 
 
@@ -46,7 +46,7 @@ def _as_bool(value, default=False):
 
 
 def resolve_gps_scaling(flat_agent: dict, world_w, world_h):
-    """Divisor for the gps observation, from the agent preset's `odom` entry.
+    """Divisor for the gps observation, from the preset's `relative_pose` entry.
 
     The gps observation is position relative to spawn divided by this factor, to
     land in the Box(-1, 1) the nets expect. Overshooting that box is not
@@ -54,7 +54,7 @@ def resolve_gps_scaling(flat_agent: dict, world_w, world_h):
     killed the compare_fullsar runs on a 1000x1000 world.
 
         sensors:
-          - name: odom
+          - name: relative_pose
             rl_scaling_mode: automatic     # fixed (default) | automatic
             rl_scaling_factor: 300         # the divisor in fixed mode
 
@@ -66,8 +66,8 @@ def resolve_gps_scaling(flat_agent: dict, world_w, world_h):
 
     Returns (mode, factor).
     """
-    mode = str(flat_agent.get("odom/rl_scaling_mode", "fixed")).strip().lower()
-    factor = float(flat_agent.get("odom/rl_scaling_factor", 300.0))
+    mode = str(flat_agent.get("relative_pose/rl_scaling_mode", "fixed")).strip().lower()
+    factor = float(flat_agent.get("relative_pose/rl_scaling_factor", 300.0))
 
     if mode == "automatic":
         if world_w is None or world_h is None:
@@ -216,8 +216,8 @@ class WildfireGymEnv(gym.Env):# # #{
         # --- Grid-cell encoding of GPS ---
         # When True, the "gps" observation becomes a vector of grid-cell
         # activations instead of the raw 2D position. Set per-agent under the
-        # same `odom` entry; the encoder's own params stay fixed here.
-        self.use_grid_cells = _as_bool(_flat_agent.get("odom/use_grid_cells", False))
+        # same `relative_pose` entry; the encoder's own params stay fixed here.
+        self.use_grid_cells = _as_bool(_flat_agent.get("relative_pose/use_grid_cells", False))
         self.grid_cell_num_cells = 8
         self.grid_cell_min_scale = 2.0
         self.grid_cell_max_scale = 100.0
@@ -343,9 +343,13 @@ class WildfireGymEnv(gym.Env):# # #{
             print("Warning: unknown goal observation format, defaulting to normalized_deltavec")
             return 1
 
-        # Get gps enabled and compass enabled from agent config
-        # for gps - agent should have either relative_pose or odom in the list of sensors
-        self.gps_enabled = any(s in _sensors_list for s in ["relative_pose", "odom"])
+        # Get gps enabled and compass enabled from agent config.
+        # `relative_pose` ONLY — it is the sole publisher of
+        # /rat1_pose_from_start, which _extract_gps reads. `odom` used to count
+        # here too, but Odom2DSensor publishes a per-step delta on /odom, not a
+        # position: listing it without relative_pose gave you a gps key wired to
+        # nothing, returning zeros and warning every step.
+        self.gps_enabled = "relative_pose" in _sensors_list
         self.compass_enabled = "compass" in _sensors_list
         print("GPS enabled: " + str(self.gps_enabled) + ", Compass enabled: " + str(self.compass_enabled))
 
