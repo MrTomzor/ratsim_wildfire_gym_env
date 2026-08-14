@@ -24,6 +24,79 @@ from ratsim.task_tracker import TaskTracker
 from ratsim_wildfire_gym_env.curricula import *
 from ratsim_wildfire_gym_env.grid_cell_encoder import GridCellEncoder
 
+# Sensor params consumed here in Python rather than by a Unity component. They
+# ride along in the agent preset for authoring convenience, but are stripped
+# before the config is published so AgentLoader's reflection pass doesn't log
+# "field not found" for them — that warning should keep meaning "you typo'd a
+# real Unity sensor param".
+PYTHON_ONLY_SENSOR_PARAMS = {
+    "odom/rl_scaling_mode",
+    "odom/rl_scaling_factor",
+    "odom/use_grid_cells",
+}
+
+
+def _as_bool(value, default=False):
+    """Agent presets reach us as YAML bools or as Unity-style strings."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def resolve_gps_scaling(flat_agent: dict, world_w, world_h):
+    """Divisor for the gps observation, from the agent preset's `odom` entry.
+
+    The gps observation is position relative to spawn divided by this factor, to
+    land in the Box(-1, 1) the nets expect. Overshooting that box is not
+    cosmetic: dreamer's embodied CheckSpaces wrapper raises, which is what
+    killed the compare_fullsar runs on a 1000x1000 world.
+
+        sensors:
+          - name: odom
+            rl_scaling_mode: automatic     # fixed (default) | automatic
+            rl_scaling_factor: 300         # the divisor in fixed mode
+
+    `automatic` only ever scales UP — max(factor, arena extent) — so every arena
+    smaller than the factor keeps the exact numbers it had before and existing
+    runs stay comparable. The max is over the FULL width and height, not half:
+    gps is relative to spawn, not to world centre, so an agent spawned at one
+    edge can traverse the whole extent along an axis.
+
+    Returns (mode, factor).
+    """
+    mode = str(flat_agent.get("odom/rl_scaling_mode", "fixed")).strip().lower()
+    factor = float(flat_agent.get("odom/rl_scaling_factor", 300.0))
+
+    if mode == "automatic":
+        if world_w is None or world_h is None:
+            print("Warning: gps rl_scaling_mode=automatic but the worldgen config "
+                  "has no world_bounds/width|height — falling back to the fixed "
+                  f"factor {factor}.")
+        else:
+            factor = max(factor, float(world_w), float(world_h))
+    elif mode != "fixed":
+        print(f"Warning: unknown gps rl_scaling_mode '{mode}', treating as 'fixed'.")
+        mode = "fixed"
+
+    return mode, factor
+
+
+def _strip_python_only_params(agent_config: dict) -> dict:
+    """Copy of agent_config without the params only the Gym env reads."""
+    sensors = agent_config.get("sensors")
+    if not isinstance(sensors, list):
+        return agent_config
+    stripped = []
+    for item in sensors:
+        if isinstance(item, dict) and "name" in item:
+            item = {k: v for k, v in item.items()
+                    if f"{item['name']}/{k}" not in PYTHON_ONLY_SENSOR_PARAMS}
+        stripped.append(item)
+    return {**agent_config, "sensors": stripped}
+
+
 class WildfireGymEnv(gym.Env):# # #{
     metadata = {"render_modes": []}
 
@@ -129,18 +202,22 @@ class WildfireGymEnv(gym.Env):# # #{
         # self.lidar_observation_format = "depth_only"
         self.lidar_observation_format = "depth_and_semantics"
         self.lidar_enabled = True
-        # TODO - handle gps normalization factor based on worldgen config (arena size)?
         self.gps_enabled = True
-        self.gps_normalization_factor = 300.0 # divide gps readings by this factor to keep in reasonable range for NN
-        # self.gps_normalization_factor = 1
         self.compass_enabled = True
+        self._warned_compass_missing = False
         self.discrete_actions = True
+
+        # --- GPS scaling (driven by the `odom` entry in the agent preset) ---
+        self.gps_normalization_mode, self.gps_normalization_factor = (
+            resolve_gps_scaling(_flat_agent, world_w, world_h))
+        print(f"GPS scaling: mode={self.gps_normalization_mode}, "
+              f"factor={self.gps_normalization_factor}")
 
         # --- Grid-cell encoding of GPS ---
         # When True, the "gps" observation becomes a vector of grid-cell
-        # activations instead of the raw 2D position. Toggle is set here at
-        # env construction; later it can be plumbed through agent_config.
-        self.use_grid_cells = False
+        # activations instead of the raw 2D position. Set per-agent under the
+        # same `odom` entry; the encoder's own params stay fixed here.
+        self.use_grid_cells = _as_bool(_flat_agent.get("odom/use_grid_cells", False))
         self.grid_cell_num_cells = 8
         self.grid_cell_min_scale = 2.0
         self.grid_cell_max_scale = 100.0
@@ -183,7 +260,7 @@ class WildfireGymEnv(gym.Env):# # #{
         print("Selected Wildfire scene in Ratsim.")
 
         # --- Send agent config ---
-        agent_config_json = to_entries_json(self.agent_config)
+        agent_config_json = to_entries_json(_strip_python_only_params(self.agent_config))
         print("Sending agent config: " + agent_config_json)
         self.conn.publish(StringMessage(data=agent_config_json), "/sim_control/agent_config")
         self.conn.send_messages_and_step(enable_physics_step=False)
@@ -731,17 +808,38 @@ class WildfireGymEnv(gym.Env):# # #{
         return res# # #}
 
     def _extract_compass(self, msgs):# # #{
+        # Read CompassSensor's own topic. This used to read
+        # /rat1_pose_from_start, which only RelativePoseSensor publishes — and
+        # that same sensor is one of the two that gate the gps observation (see
+        # the gps_enabled line in __init__). So dropping relative_pose to turn
+        # gps off silently zeroed the compass too. Reading /compass decouples
+        # them: an agent can now list `compass` without `relative_pose`/`odom`.
+        compass_topic = "/compass"
         pose_relative_to_start_topic = "/rat1_pose_from_start"
         res = np.zeros(1, dtype=np.float32)
-        if not pose_relative_to_start_topic in msgs.keys():
-            print("Warning: Compass message not found in msgs.")
-            print("Which topics are available:", list(msgs.keys()))
-            return res
-        pose_msg = msgs[pose_relative_to_start_topic][0]
-        yaw = yaw_from_quat(pose_msg.qx, pose_msg.qy, pose_msg.qz, pose_msg.qw)
-        heading = yaw / np.pi  # normalize to [-1, 1]
 
-        res[0] = heading
+        if compass_topic in msgs.keys():
+            # Float32Message, yaw in radians [-pi, pi], ROS frame, biasRad applied.
+            yaw = msgs[compass_topic][0].data
+        elif pose_relative_to_start_topic in msgs.keys():
+            # Fallback for builds whose agent prefab has no CompassSensor. Same
+            # convention either way: CompassSensor and CoordConversion.
+            # UnityRotToRosQuat both negate the Unity euler-y, so the two agree
+            # up to biasRad (which the fallback can't apply).
+            pose_msg = msgs[pose_relative_to_start_topic][0]
+            yaw = yaw_from_quat(pose_msg.qx, pose_msg.qy, pose_msg.qz, pose_msg.qw)
+        else:
+            # Warn once, not per step: at 4 envs × 300k steps the old per-step
+            # print buried the scheduler logs.
+            if not self._warned_compass_missing:
+                self._warned_compass_missing = True
+                print(f"Warning: no compass source ({compass_topic} or "
+                      f"{pose_relative_to_start_topic}) in msgs, heading reads 0. "
+                      f"Is 'compass' in the agent preset's sensors?")
+                print("Which topics are available:", list(msgs.keys()))
+            return res
+
+        res[0] = yaw / np.pi  # normalize to [-1, 1]
         # print("Compass reading (normalized heading): " + str(res))
         return res
 # # #}
