@@ -55,7 +55,7 @@ No test suite exists; testing is done via the `test_*.py` evaluation/interaction
 **Multi-instance / vectorized training kwarg**:
 - `unity_port`: TCP port the connector attaches to (default 9000). For vectorized training, allocate ports via `ratsim.unity_launcher.allocate_unity_instances(n_envs)` and pass each env factory its own port. The `unity_launcher` handles two tiers: with `RATSIM_UNITY_BIN` set, it auto-spawns Unity instances on the 9100+ range for `n_envs>1`; without the env var, only `n_envs=1` works (reuses the manually-launched Unity on port 9000). See `ratsim/CLAUDE.md` for the full launcher contract.
 
-`episode_idx` is **cumulative across stages**: on construction, the env counts existing lines in `episode_log_path` and uses that as its offset, so restarting the env for a new stage in the same run dir continues the numbering. `get_num_episodes()` returns the in-memory counter.
+`episode_idx` is **cumulative across stages and per-env**: on construction, the env scans `episode_log_path` for the highest `episode_idx` written with its own `env_idx` and continues from there, so restarting the env for a new stage in the same run dir continues that env's numbering (`(env_idx, episode_idx)` is unique and monotone). Appends are flock-serialized — with `n_envs>1` the parallel envs are separate processes writing to one file, and unlocked appends tear on network filesystems. `get_num_episodes()` returns the in-memory counter.
 
 **Observation space** (Dict):
 - `lidar`: Normalized depth (+ optional semantic descriptors), range 0–1

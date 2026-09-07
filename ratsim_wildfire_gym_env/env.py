@@ -1,3 +1,4 @@
+import fcntl
 import json
 import time
 from pathlib import Path
@@ -139,8 +140,26 @@ class WildfireGymEnv(gym.Env):# # #{
         # write here (e.g. AdaptiveDifficultyWrapper records 'difficulty').
         self.extra_log_fields: dict = {}
         if self.episode_log_path is not None and self.episode_log_path.exists():
+            # Resume numbering from the highest episode_idx THIS env (matching
+            # env_idx) previously wrote. Counting all lines instead — the old
+            # behaviour — made every env's offset include the other envs'
+            # episodes, so with n_envs > 1 all envs emitted the same indices
+            # in lockstep (each value n_envs times). Taking the per-env max
+            # also continues cleanly after files written by that old code.
+            # Torn lines (pre-flock concurrent appends) are skipped.
+            my_env_idx = self.run_metadata.get("env_idx")
+            last = 0
             with open(self.episode_log_path) as f:
-                self.episode_idx_offset = sum(1 for _ in f)
+                for line in f:
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    if rec.get("env_idx") == my_env_idx:
+                        idx = rec.get("episode_idx")
+                        if isinstance(idx, int) and idx > last:
+                            last = idx
+            self.episode_idx_offset = last
         self.episode_start_time = time.time()
 
         self.curriculum = None
@@ -709,8 +728,14 @@ class WildfireGymEnv(gym.Env):# # #{
             **self.extra_log_fields,
         }
         self.episode_log_path.parent.mkdir(parents=True, exist_ok=True)
+        # flock + one flushed write per line: with n_envs > 1 the parallel envs
+        # are separate processes (SubprocVecEnv) all appending here, and
+        # unlocked appends tear on network filesystems (observed on the
+        # cluster's /mnt/personal — stray '}' fragments mid-file).
         with open(self.episode_log_path, "a") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
             f.write(json.dumps(record) + "\n")
+            f.flush()
     # # #}
 
     # --- Sensor helpers ---
